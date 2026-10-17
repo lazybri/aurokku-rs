@@ -9,7 +9,7 @@ Usage:
   .\build-linux.ps1                        # auto-detect zig under %USERPROFILE%\tools
   .\build-linux.ps1 -ZigPath C:\zig\zig.exe
 
-Output: target\x86_64-unknown-linux-musl\release\kddilck (static ELF, no runtime deps)
+Output: target\x86_64-unknown-linux-musl\release\auroku (static ELF, no runtime deps)
 #>
 param(
     [string]$ZigPath = ""
@@ -108,4 +108,4 @@ $env:AR_x86_64_unknown_linux_musl = $arExe
 cargo build --release --target $rustTarget
 
 Write-Host ""
-Write-Host "Output: target\$rustTarget\release\kddilck"
+Write-Host "Output: target\$rustTarget\release\auroku"
