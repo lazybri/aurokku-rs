@@ -55,10 +55,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install musl toolchain
+      - name: Install musl toolchain and Linux UAPI headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools linux-libc-dev
+
+          # musl-gcc 的 specs 使用 -nostdinc，只会搜索 musl 自己的 include
+          # 目录，导致 libusb 的 linux_netlink.c 找不到 <linux/magic.h>。
+          # 这里只把内核 UAPI 头文件链接进 musl 的 include 路径；
+          # 不要直接加 -I/usr/include，否则会把 glibc 头文件混入 musl 编译。
+          MUSL_INC=/usr/include/x86_64-linux-musl
+          sudo ln -sfn /usr/include/linux "$MUSL_INC/linux"
+          sudo ln -sfn /usr/include/asm-generic "$MUSL_INC/asm-generic"
+          sudo ln -sfn /usr/include/x86_64-linux-gnu/asm "$MUSL_INC/asm"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -68,7 +77,9 @@ jobs:
         run: cargo build --release --target x86_64-unknown-linux-musl
 
       - name: Verify static ELF
-        run: file target/x86_64-unknown-linux-musl/release/kddilck
+        run: |
+          file target/x86_64-unknown-linux-musl/release/kddilck
+          file target/x86_64-unknown-linux-musl/release/kddilck | grep -q 'statically linked'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
