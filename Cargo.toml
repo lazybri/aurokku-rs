@@ -1,0 +1,21 @@
+[package]
+name = "kddilck"
+version = "0.2.0"
+edition = "2021"
+description = "SERI USB UIM-lock / PIN tool (Rust port of kddilck-v2.py)"
+license = "MIT"
+
+[[bin]]
+name = "kddilck"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+hex = "0.4"
+md-5 = "0.10"
+rusb = { version = "0.9", features = ["vendored"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+strip = true

@@ -1,0 +1,99 @@
+name: Build binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "编译目标"
+        required: true
+        type: choice
+        default: windows-x86_64
+        options:
+          - windows-x86_64
+          - linux-x86_64
+          - macos-universal
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-x86_64:
+    name: Windows x86_64
+    if: inputs.target == 'windows-x86_64'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kddilck-windows-x86_64
+          path: target/x86_64-pc-windows-msvc/release/kddilck.exe
+          if-no-files-found: error
+
+  linux-x86_64:
+    name: Linux x86_64 (static musl)
+    if: inputs.target == 'linux-x86_64'
+    runs-on: ubuntu-latest
+    env:
+      # libusb1-sys 会通过 pkg-config 探测 libudev；禁用探测以使用内置
+      # netlink 后端，避免把 glibc 的 libudev 链进 musl 静态二进制。
+      PKG_CONFIG: /bin/false
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      AR_x86_64_unknown_linux_musl: ar
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Verify static ELF
+        run: file target/x86_64-unknown-linux-musl/release/kddilck
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kddilck-linux-x86_64
+          path: target/x86_64-unknown-linux-musl/release/kddilck
+          if-no-files-found: error
+
+  macos-universal:
+    name: macOS universal (arm64 + x86_64)
+    if: inputs.target == 'macos-universal'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build universal binary
+        run: bash build-macos.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kddilck-macos-universal
+          path: dist/kddilck
+          if-no-files-found: error
