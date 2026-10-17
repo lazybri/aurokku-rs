@@ -6,16 +6,32 @@ rust-version = "1.88"
 description = "SERI / Type2Auth USB device service tool (Rust port of auRokku.py)"
 license = "MIT"
 
+[features]
+default = []
+# Build the egui/eframe Material 3 front-end:
+#   cargo run --release --features gui --bin auroku-gui
+gui = ["dep:eframe"]
+
 [[bin]]
 name = "auroku"
 path = "src/main.rs"
 
+[[bin]]
+name = "auroku-gui"
+path = "src/bin/auroku-gui/main.rs"
+required-features = ["gui"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+eframe = { version = "0.33", optional = true }
 hex = "0.4"
 md-5 = "0.10"
 rusb = { version = "0.9", features = ["vendored"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Safe effective-UID check for the polkit/pkexec start-up elevation path.
+rustix = { version = "1", features = ["process"] }
 
 [profile.release]
 lto = true

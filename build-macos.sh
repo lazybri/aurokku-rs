@@ -18,7 +18,8 @@
 #   ./build-macos.sh --help
 #
 # Output:
-#   dist/auroku   (Mach-O, ad-hoc signed when codesign is available)
+#   dist/auroku       (CLI, Mach-O, ad-hoc signed when codesign is available)
+#   dist/auroku-gui   (GUI, Mach-O, ad-hoc signed when codesign is available)
 #
 set -euo pipefail
 
@@ -32,7 +33,9 @@ Usage: ./build-macos.sh [--native | --universal]
   --native      Build only the current machine architecture
   -h, --help    Show this help
 
-Output: dist/auroku
+Output:
+  dist/auroku       CLI
+  dist/auroku-gui   GUI
 EOF
 }
 
@@ -70,6 +73,7 @@ fi
 
 OUT_DIR=dist
 OUT="$OUT_DIR/auroku"
+GUI_OUT="$OUT_DIR/auroku-gui"
 mkdir -p "$OUT_DIR"
 
 if [[ "$MODE" == "native" ]]; then
@@ -89,9 +93,12 @@ if [[ "$MODE" == "native" ]]; then
         fi
     fi
 
-    echo "==> cargo build --release --locked --target $TARGET"
-    cargo build --release --locked --target "$TARGET"
+    echo "==> cargo build --release --locked --target $TARGET --bin auroku"
+    cargo build --release --locked --target "$TARGET" --bin auroku
+    echo "==> cargo build --release --locked --target $TARGET --features gui --bin auroku-gui"
+    cargo build --release --locked --target "$TARGET" --features gui --bin auroku-gui
     cp "target/$TARGET/release/auroku" "$OUT"
+    cp "target/$TARGET/release/auroku-gui" "$GUI_OUT"
 else
     TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
     if command -v rustup >/dev/null 2>&1; then
@@ -99,8 +106,10 @@ else
     fi
 
     for target in "${TARGETS[@]}"; do
-        echo "==> cargo build --release --locked --target $target"
-        cargo build --release --locked --target "$target"
+        echo "==> cargo build --release --locked --target $target --bin auroku"
+        cargo build --release --locked --target "$target" --bin auroku
+        echo "==> cargo build --release --locked --target $target --features gui --bin auroku-gui"
+        cargo build --release --locked --target "$target" --features gui --bin auroku-gui
     done
 
     # Combine both slices. Each slice is already stripped by [profile.release].
@@ -108,20 +117,28 @@ else
         "target/${TARGETS[0]}/release/auroku" \
         "target/${TARGETS[1]}/release/auroku" \
         -output "$OUT"
+    lipo -create \
+        "target/${TARGETS[0]}/release/auroku-gui" \
+        "target/${TARGETS[1]}/release/auroku-gui" \
+        -output "$GUI_OUT"
 fi
 
-chmod +x "$OUT"
+chmod +x "$OUT" "$GUI_OUT"
 
 # Ad-hoc signature: required for arm64 executables and keeps Gatekeeper happy
 # for locally built binaries. Remove if you sign with a Developer ID instead.
 if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$OUT"
+    codesign --force --sign - "$GUI_OUT"
 fi
 
 echo
 if [[ "$MODE" == "universal" ]]; then
     lipo -info "$OUT"
+    lipo -info "$GUI_OUT"
 fi
 file "$OUT"
+file "$GUI_OUT"
 echo "Output: $OUT"
+echo "Output: $GUI_OUT"
 

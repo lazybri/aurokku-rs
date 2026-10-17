@@ -6,8 +6,9 @@
     Uses the installed Rust host toolchain by default. Pass -Target to build a
     specific triple, for example x86_64-pc-windows-gnu.
 
-    The C runtime is linked statically (crt-static); Windows system DLLs such
-    as kernel32/user32 are still provided by the OS and cannot be static.
+    The C runtime is linked statically (crt-static) for both the CLI and GUI;
+    Windows system DLLs such as kernel32/user32 (and opengl32 for the GUI) are
+    still provided by the OS and cannot be static.
 
     A C compiler is required because rusb vendors libusb:
       - MSVC targets need Visual Studio Build Tools (Desktop development with C++)
@@ -21,6 +22,7 @@
 
 .OUTPUTS
     dist\auroku.exe
+    dist\auroku-gui.exe
     dist\auroku-windows-<arch>.zip
 #>
 param(
@@ -51,23 +53,33 @@ $arch = switch -Wildcard ($Target) {
     default    { 'x86_64' }
 }
 
-Write-Host "==> cargo build --release --locked --target $Target"
-cargo build --release --locked --target $Target
+Write-Host "==> cargo build --release --locked --target $Target --bin auroku (static CRT)"
+cargo build --release --locked --target $Target --bin auroku
+
+Write-Host "==> cargo build --release --locked --target $Target --features gui --bin auroku-gui (static CRT)"
+cargo build --release --locked --target $Target --features gui --bin auroku-gui
 
 $built = Join-Path $PSScriptRoot "target\$Target\release\auroku.exe"
+$builtGui = Join-Path $PSScriptRoot "target\$Target\release\auroku-gui.exe"
 if (-not (Test-Path $built)) {
     throw "Build output not found: $built"
+}
+if (-not (Test-Path $builtGui)) {
+    throw "Build output not found: $builtGui"
 }
 
 $distDir = Join-Path $PSScriptRoot 'dist'
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
 $distExe = Join-Path $distDir 'auroku.exe'
+$distGuiExe = Join-Path $distDir 'auroku-gui.exe'
 Copy-Item $built $distExe -Force
+Copy-Item $builtGui $distGuiExe -Force
 
 $zip = Join-Path $distDir "auroku-windows-$arch.zip"
-Compress-Archive -Path $distExe -DestinationPath $zip -Force
+Compress-Archive -Path @($distExe, $distGuiExe) -DestinationPath $zip -Force
 
 Write-Host ""
 Write-Host "Output:  $distExe"
+Write-Host "Output:  $distGuiExe"
 Write-Host "Archive: $zip"

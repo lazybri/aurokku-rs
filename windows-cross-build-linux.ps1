@@ -6,10 +6,15 @@ Prerequisites:
   - Zig (provides Linux headers, musl libc and the lld linker)
 
 Usage:
-  .\build-linux.ps1                        # auto-detect zig under %USERPROFILE%\tools
-  .\build-linux.ps1 -ZigPath C:\zig\zig.exe
+  .\windows-cross-build-linux.ps1                        # auto-detect zig under %USERPROFILE%\tools
+  .\windows-cross-build-linux.ps1 -ZigPath C:\zig\zig.exe
 
 Output: target\x86_64-unknown-linux-musl\release\auroku (static ELF, no runtime deps)
+
+The GUI is intentionally not cross-built here: a static musl binary cannot
+dlopen Wayland/X11/OpenGL, and cross-linking a glibc GUI would require a full
+Linux graphics sysroot. Build the Linux GUI on a Linux box with
+./build-linux.sh, or download it from the GitHub Actions release artifacts.
 #>
 param(
     [string]$ZigPath = ""
@@ -109,3 +114,4 @@ cargo build --release --target $rustTarget
 
 Write-Host ""
 Write-Host "Output: target\$rustTarget\release\auroku"
+Write-Host "Note:   Linux GUI is not cross-built; run ./build-linux.sh on Linux."

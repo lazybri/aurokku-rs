@@ -66,9 +66,10 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
             rust_targets: x86_64-pc-windows-msvc
-            asset: auroku-windows-x86_64.zip
+            asset: dist/auroku-windows-x86_64.zip
           - name: linux-x86_64
-            os: ubuntu-latest
+            # 22.04 keeps the dynamically linked GUI compatible with glibc 2.35+.
+            os: ubuntu-22.04
             rust_targets: x86_64-unknown-linux-musl
             asset: auroku-linux-x86_64.tar.gz
           - name: macos-universal
@@ -90,11 +91,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build (Windows, static CRT)
+      - name: Build & package (Windows, static CRT)
         if: matrix.name == 'windows-x86_64'
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release --locked --target ${{ matrix.rust_targets }}
+        shell: pwsh
+        run: ./build-windows.ps1 -Target ${{ matrix.rust_targets }}
 
       - name: Build (Linux musl, fully static)
         if: matrix.name == 'linux-x86_64'
@@ -106,7 +106,9 @@ jobs:
         if: matrix.name == 'macos-universal'
         run: |
           bash build-macos.sh
-          ditto -c -k --keepParent dist/auroku auroku-macos-universal.zip
+          mkdir -p dist/macos-universal
+          cp dist/auroku dist/auroku-gui dist/macos-universal/
+          ditto -c -k --keepParent dist/macos-universal auroku-macos-universal.zip
 
       - name: Verify & package (Linux musl)
         if: matrix.name == 'linux-x86_64'
@@ -116,18 +118,13 @@ jobs:
             | grep -Eq 'statically linked|static-pie linked'
           # 必须没有动态解释器，否则 target 上缺少 loader 时无法运行。
           ! readelf -l target/x86_64-unknown-linux-musl/release/auroku | grep -q 'INTERP'
+          # 必须没有 DT_NEEDED 动态依赖。
+          ! readelf -d target/x86_64-unknown-linux-musl/release/auroku | grep -q 'NEEDED'
           # 双重确认没有动态依赖
           ! ldd target/x86_64-unknown-linux-musl/release/auroku 2>&1 | grep -q '=>'
+          file dist/auroku-gui-linux-x86_64
           tar -czf auroku-linux-x86_64.tar.gz \
-            -C target/x86_64-unknown-linux-musl/release auroku
-
-      - name: Package (Windows)
-        if: matrix.name == 'windows-x86_64'
-        shell: pwsh
-        run: >
-          Compress-Archive
-          -Path target/x86_64-pc-windows-msvc/release/auroku.exe
-          -DestinationPath auroku-windows-x86_64.zip
+            -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
