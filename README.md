@@ -1,6 +1,7 @@
 # kddilck (Rust)
 
-`kddilck-v2.py` 的 Rust 重写版本，协议行为、认证算法与命令行接口保持一致。
+`kddilck.py` 的 Rust 重写版本，协议行为、认证算法与命令行接口保持一致。
+感谢Yuu所提供的python版源码
 
 ## 功能
 
