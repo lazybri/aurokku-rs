@@ -6,6 +6,9 @@
     Uses the installed Rust host toolchain by default. Pass -Target to build a
     specific triple, for example x86_64-pc-windows-gnu.
 
+    The C runtime is linked statically (crt-static); Windows system DLLs such
+    as kernel32/user32 are still provided by the OS and cannot be static.
+
     A C compiler is required because rusb vendors libusb:
       - MSVC targets need Visual Studio Build Tools (Desktop development with C++)
       - GNU targets need MinGW-w64 (e.g. via MSYS2)
@@ -33,6 +36,13 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 if (-not $Target) {
     $Target = (rustc -vV | Select-String '^host:').ToString().Split(':')[1].Trim()
+}
+
+# Static-only build: link the C runtime into the executable.
+if ($env:RUSTFLAGS) {
+    $env:RUSTFLAGS = "$env:RUSTFLAGS -C target-feature=+crt-static"
+} else {
+    $env:RUSTFLAGS = '-C target-feature=+crt-static'
 }
 
 $arch = switch -Wildcard ($Target) {

@@ -20,23 +20,37 @@
 因此还需要一个 C 编译器（Linux/macOS 的 `gcc`/`clang`，Windows 的 MSVC
 Build Tools 或 MinGW-w64）。
 
-各平台提供本地编译脚本，产物统一放到 `dist/`：
+各平台提供本地编译脚本，产物统一放到 `dist/`。构建默认只产出静态链接配置
+（Linux/Windows 为完全静态；macOS 受系统限制只能动态链接 libSystem 与系统
+框架，Rust 依赖及 vendored libusb 仍为静态链接）：
 
 | 平台 | 命令 | 产物 |
 | --- | --- | --- |
-| Linux | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64` |
-| Linux（静态 musl） | `./build-linux.sh --musl` | 同上（静态 ELF，无运行时依赖） |
-| Windows | `.\build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-windows-<arch>.zip` |
+| Linux（静态 musl） | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64`（静态 ELF，无运行时依赖） |
+| Windows（静态 CRT） | `.\build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-windows-<arch>.zip` |
 | macOS（通用二进制） | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku`（arm64 + x86_64） |
 | macOS（仅本机架构） | `./build-macos.sh --native` | `dist/auroku` |
 
-也可以直接使用 Cargo：
+Linux 构建需要 `musl-gcc` 与内核 UAPI 头文件：
 
 ```bash
-cargo build --release
+# Debian/Ubuntu
+sudo apt-get install musl-tools linux-libc-dev
+# Fedora
+sudo dnf install musl-gcc kernel-headers
+# Arch
+sudo pacman -S musl linux-api-headers
 ```
 
-产物：`target/release/auroku`（Windows 为 `auroku.exe`）。
+也可以直接使用 Cargo。`.cargo/config.toml` 已为 musl 与 Windows 目标启用静态
+链接；Linux 上脚本会额外准备内核 UAPI 头文件，若直接构建可等价传入：
+
+```bash
+C_INCLUDE_PATH=/usr/include:/usr/include/x86_64-linux-gnu \
+  cargo build --release --target x86_64-unknown-linux-musl
+```
+
+产物：`target/x86_64-unknown-linux-musl/release/auroku`（静态 ELF）。
 
 ### 交叉编译 Linux（x86_64 静态 musl）
 
@@ -66,6 +80,10 @@ chmod +x build-macos.sh
 产物：`dist/auroku`（同时支持 Apple Silicon 与 Intel Mac）
 
 仅构建当前机器架构可使用 `./build-macos.sh --native`（速度更快）。
+
+> macOS 不支持完全静态的可执行文件：libSystem 与系统框架必须动态链接。
+> 脚本已将全部 Rust 依赖与 vendored libusb 静态链接，除此之外没有可用的
+> 静态编译选项。
 
 ## GitHub Actions
 

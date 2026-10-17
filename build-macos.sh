@@ -2,6 +2,11 @@
 #
 # Build auroku locally on macOS.
 #
+# Note: macOS does not support fully static executables; libSystem and the
+# system frameworks are always linked dynamically. All Rust crates and the
+# vendored libusb are still linked statically, and no compile option can
+# remove the remaining system dylib dependency.
+#
 # Must run on macOS with Xcode Command Line Tools installed; cross-linking
 # Mach-O binaries from Windows/Linux requires the Apple SDK, which is not
 # redistributable, so this script intentionally refuses other hosts.

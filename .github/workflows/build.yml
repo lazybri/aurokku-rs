@@ -84,35 +84,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools linux-libc-dev
 
-          # musl-gcc 的 specs 使用 -nostdinc，只会搜索 musl 自己的 include
-          # 目录，导致 libusb 的 linux_netlink.c 找不到 <linux/magic.h>。
-          # 这里只把内核 UAPI 头文件链接进 musl 的 include 路径；
-          # 不要直接加 -I/usr/include，否则会把 glibc 头文件混入 musl 编译。
-          MUSL_INC=/usr/include/x86_64-linux-musl
-          sudo ln -sfn /usr/include/linux "$MUSL_INC/linux"
-          sudo ln -sfn /usr/include/asm-generic "$MUSL_INC/asm-generic"
-          sudo ln -sfn /usr/include/x86_64-linux-gnu/asm "$MUSL_INC/asm"
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_targets }}
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build (Windows)
+      - name: Build (Windows, static CRT)
         if: matrix.name == 'windows-x86_64'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --locked --target ${{ matrix.rust_targets }}
 
-      - name: Build (Linux musl)
+      - name: Build (Linux musl, fully static)
         if: matrix.name == 'linux-x86_64'
-        env:
-          # libusb1-sys 会通过 pkg-config 探测 libudev；禁用探测以使用内置
-          # netlink 后端，避免把 glibc 的 libudev 链进 musl 静态二进制。
-          PKG_CONFIG: /bin/false
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          AR_x86_64_unknown_linux_musl: ar
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-        run: cargo build --release --locked --target ${{ matrix.rust_targets }}
+        run: |
+          chmod +x build-linux.sh
+          ./build-linux.sh
 
       - name: Build & package (macOS universal)
         if: matrix.name == 'macos-universal'
@@ -124,11 +112,11 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: |
           file target/x86_64-unknown-linux-musl/release/auroku
-          # rustc 对 musl target 默认产出 static-pie，file 会输出
-          # "static-pie linked" 而不是 "statically linked"，两者都算静态可执行文件。
           file target/x86_64-unknown-linux-musl/release/auroku \
             | grep -Eq 'statically linked|static-pie linked'
-          # 双重确认没有动态解释器（ldd 会报 "not a dynamic executable"）
+          # 必须没有动态解释器，否则 target 上缺少 loader 时无法运行。
+          ! readelf -l target/x86_64-unknown-linux-musl/release/auroku | grep -q 'INTERP'
+          # 双重确认没有动态依赖
           ! ldd target/x86_64-unknown-linux-musl/release/auroku 2>&1 | grep -q '=>'
           tar -czf auroku-linux-x86_64.tar.gz \
             -C target/x86_64-unknown-linux-musl/release auroku
