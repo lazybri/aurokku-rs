@@ -137,7 +137,8 @@ if(WIN32)
     add_custom_command(TARGET auroku-qt POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${FFI_LIBRARY}"
                 "$<TARGET_FILE_DIR:auroku-qt>"
-        COMMENT "Copying auroku_ffi.dll next to the executable")
+        COMMENT "Copying auroku_ffi.dll next to the executable"
+        VERBATIM)
 endif()
 
 if(UNIX AND NOT APPLE)
@@ -147,7 +148,8 @@ if(UNIX AND NOT APPLE)
     add_custom_command(TARGET auroku-qt POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${FFI_LIBRARY}"
                 "$<TARGET_FILE_DIR:auroku-qt>"
-        COMMENT "Copying libauroku_ffi.so next to the executable")
+        COMMENT "Copying libauroku_ffi.so next to the executable"
+        VERBATIM)
     target_link_options(auroku-qt PRIVATE "-Wl,-rpath,$ORIGIN")
 endif()
 
@@ -177,5 +179,6 @@ if(APPLE)
         # copied dylib relocatable and point the executable at it.
         COMMAND /bin/sh -c "install_name_tool -id @rpath/libauroku_ffi.dylib '$<TARGET_BUNDLE_CONTENT_DIR:auroku-qt>/MacOS/libauroku_ffi.dylib' 2>/dev/null || true"
         COMMAND /bin/sh -c "install_name_tool -change '${FFI_LIBRARY}' '@rpath/libauroku_ffi.dylib' '$<TARGET_FILE:auroku-qt>' 2>/dev/null || true"
-        COMMENT "Copying libauroku_ffi.dylib into the bundle")
+        COMMENT "Copying libauroku_ffi.dylib into the bundle"
+        VERBATIM)
 endif()
