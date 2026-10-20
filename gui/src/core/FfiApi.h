@@ -1,8 +1,8 @@
 #pragma once
 
-// C ABI exported by `crates/auroku-ffi` (auroku_ffi.dll / libauroku_ffi.so /
-// libauroku_ffi.dylib). Every function returning `char*` returns a JSON
-// envelope and the caller must release it with `auroku_string_free`.
+// C ABI exported by `crates/auroku-ffi` (linked statically into the GUI as
+// libauroku_ffi.a or auroku_ffi.lib). Every function returning `char*` returns
+// a JSON envelope and the caller must release it with `auroku_string_free`.
 extern "C" {
 using AurokuLogCallback = void (*)(const char *line, void *user_data);
 

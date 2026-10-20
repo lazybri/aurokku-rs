@@ -146,7 +146,15 @@ else
     echo "==> cmake --build $GUI_BUILD"
     cmake --build "$GUI_BUILD"
 
+    GUI_EXE="$GUI_BUILD/auroku-gui.app/Contents/MacOS/auroku-gui"
+    if command -v otool >/dev/null 2>&1 && otool -L "$GUI_EXE" | grep -q 'libauroku_ffi'; then
+        echo "error: $GUI_EXE still depends on libauroku_ffi.dylib" >&2
+        exit 1
+    fi
+
     rm -rf "$GUI_APP"
+    # Remove the bridge left in the bundle by older builds.
+    rm -f "$GUI_BUILD/auroku-gui.app/Contents/MacOS/libauroku_ffi.dylib"
     cp -R "$GUI_BUILD/auroku-gui.app" "$GUI_APP"
     DEPLOYQT="$QT_PREFIX/bin/macdeployqt"
     if [[ -x "$DEPLOYQT" ]]; then

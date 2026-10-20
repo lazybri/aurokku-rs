@@ -45,12 +45,11 @@ cmake -S gui -B build/gui -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build/gui
 ```
 
-CMake builds `crates/auroku-ffi` with Cargo and links the resulting shared
-library (`auroku_ffi.dll` / `libauroku_ffi.so` / `libauroku_ffi.dylib`).
-On Linux and Windows the library is copied next to the executable; Linux uses an
-`$ORIGIN` run path, and the macOS bundle gets `@executable_path`. Native Wayland
-sessions also need the distribution package `qt6-wayland` (otherwise Qt falls
-back to XWayland).
+CMake builds `crates/auroku-ffi` with Cargo and links the resulting static
+library (`libauroku_ffi.a` / `auroku_ffi.lib`) directly into the GUI executable.
+No separate FFI shared library is needed at build time or at runtime. Native
+Wayland sessions also need the distribution package `qt6-wayland` (otherwise Qt
+falls back to XWayland).
 
 ### FFI contract
 

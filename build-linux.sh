@@ -11,8 +11,7 @@
 #
 # Output:
 #   dist/auroku-linux-x86_64       (fully static CLI)
-#   dist/auroku-gui-linux-x86_64   (Qt 6 GUI, requires Qt 6 runtime libraries)
-#   dist/libauroku_ffi.so          (Rust bridge, keep next to the GUI binary)
+#   dist/auroku-gui-linux-x86_64   (Qt 6 GUI, Rust backend linked in)
 #
 set -euo pipefail
 
@@ -38,8 +37,7 @@ Requirements:
 
 Output:
   dist/auroku-linux-x86_64       static ELF, no runtime dependencies
-  dist/auroku-gui-linux-x86_64   Qt 6 GUI; needs the Qt 6 runtime libraries
-  dist/libauroku_ffi.so          Rust bridge; keep next to the GUI binary
+  dist/auroku-gui-linux-x86_64   Qt 6 GUI; Rust backend linked in
 EOF
 }
 
@@ -144,10 +142,10 @@ if command -v readelf >/dev/null 2>&1 && readelf -d "$OUT" | grep -q 'NEEDED'; t
 fi
 
 # --- GUI: Qt 6 Widgets front-end --------------------------------------------
-# The C++ GUI links the Rust backend through libauroku_ffi.so and needs the
+# The C++ GUI statically links the Rust backend (libauroku_ffi.a) and needs the
 # Qt 6 development files. It cannot be built against musl, so the host
-# toolchain is used. PKG_CONFIG=/bin/false still avoids linking libudev into
-# the Rust bridge.
+# toolchain is used. PKG_CONFIG=/bin/false avoids linking libudev into the Rust
+# backend.
 QT_PREFIX="${QT_PREFIX:-${QT_ROOT_DIR:-}}"
 GUI_BUILD="build/gui-linux"
 GUI_BIN="$GUI_BUILD/auroku-gui"
@@ -175,6 +173,8 @@ else
 fi
 
 mkdir -p dist
+# Remove the bridge left next to the GUI by older builds.
+rm -f dist/libauroku_ffi.so
 DIST="dist/auroku-linux-x86_64"
 cp "$OUT" "$DIST"
 chmod +x "$DIST"
@@ -185,18 +185,22 @@ echo "Static CLI: $DIST"
 
 if [[ "$GUI_BUILT" -eq 1 ]]; then
     GUI_DIST="dist/auroku-gui-linux-x86_64"
-    FFI_DIST="dist/libauroku_ffi.so"
-    FFI_SOURCE="$GUI_BUILD/libauroku_ffi.so"
-    if [[ ! -f "$FFI_SOURCE" ]]; then
-        FFI_SOURCE="target/release/libauroku_ffi.so"
+
+    if command -v readelf >/dev/null 2>&1; then
+        if readelf -d "$GUI_BIN" | grep -q 'libauroku_ffi'; then
+            echo "error: $GUI_BIN still depends on libauroku_ffi.so" >&2
+            exit 1
+        fi
+        if readelf -d "$GUI_BIN" | grep -Fq "$PWD"; then
+            echo "error: $GUI_BIN contains a build-machine path" >&2
+            exit 1
+        fi
     fi
+
     cp "$GUI_BIN" "$GUI_DIST"
-    cp "$FFI_SOURCE" "$FFI_DIST"
     chmod +x "$GUI_DIST"
     file "$GUI_BIN"
-    file "$FFI_DIST"
-    echo "GUI:        $GUI_DIST (Qt 6; requires the Qt 6 runtime libraries)"
-    echo "Bridge:     $FFI_DIST (must stay next to the GUI binary)"
+    echo "GUI:        $GUI_DIST (Qt 6; Rust backend linked in)"
 else
     echo "GUI:        skipped"
 fi

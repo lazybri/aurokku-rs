@@ -157,13 +157,14 @@ jobs:
           # 双重确认没有动态依赖
           ! ldd target/x86_64-unknown-linux-musl/release/auroku 2>&1 | grep -q '=>'
           file dist/auroku-gui-linux-x86_64
-          test -f dist/libauroku_ffi.so
+          # Rust 后端必须已静态链接进 GUI，不能再依赖 libauroku_ffi.so。
+          ! readelf -d dist/auroku-gui-linux-x86_64 | grep -q 'libauroku_ffi'
           QT_QPA_PLATFORM=offscreen \
             QT_PLUGIN_PATH="$QT_ROOT_DIR/plugins" \
             LD_LIBRARY_PATH="$QT_ROOT_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             ./dist/auroku-gui-linux-x86_64 --smoke-test
           tar -czf auroku-linux-x86_64.tar.gz \
-            -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64 libauroku_ffi.so
+            -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

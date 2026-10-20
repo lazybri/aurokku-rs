@@ -5,7 +5,8 @@
 .DESCRIPTION
     Builds the Rust CLI with the installed host toolchain (or -Target), then
     configures and builds the Qt 6 Widgets front-end in gui/ through CMake.
-    The Qt GUI links the Rust backend through the `auroku-ffi` C ABI DLL.
+    The Qt GUI statically links the Rust backend through the `auroku-ffi`
+    C ABI static library.
 
     Qt 6 (6.5+), CMake 3.21+ and Ninja are required for the GUI. If they are
     not found the script builds the CLI only and prints a warning.
@@ -161,8 +162,9 @@ if (-not $SkipGui) {
 
         $guiDir = Join-Path $distDir "auroku-gui-windows-$arch"
         New-Item -ItemType Directory -Force -Path $guiDir | Out-Null
+        # Remove the bridge left next to the GUI by older builds.
+        Remove-Item (Join-Path $guiDir 'auroku_ffi.dll') -Force -ErrorAction SilentlyContinue
         Copy-Item (Join-Path $buildDir 'auroku-gui.exe') $guiDir -Force
-        Copy-Item (Join-Path $buildDir 'auroku_ffi.dll') $guiDir -Force
         Get-ChildItem $buildDir -Filter 'Qt6*.dll' | Copy-Item -Destination $guiDir -Force
         foreach ($plugin in @('platforms', 'styles', 'imageformats', 'tls', 'generic', 'networkinformation')) {
             $source = Join-Path $buildDir $plugin

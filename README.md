@@ -28,10 +28,11 @@ confirmation dialogs) with light and dark palettes and a Chinese/English
 interface.
 
 - **Architecture**: `crates/auroku-ffi` exposes `auroku_scan_devices` and
-  `auroku_run_task` as a shared library (`auroku_ffi.dll`, `libauroku_ffi.so`
-  or `libauroku_ffi.dylib`). Requests and responses are JSON envelopes, so the
-  C++ side never models Rust types. Every USB call runs on a dedicated
-  `QThread`, so the window never blocks on libusb transfers or timeouts.
+  `auroku_run_task` through a static C ABI library that is linked directly into
+  the GUI executable (`libauroku_ffi.a` / `auroku_ffi.lib`). Requests and
+  responses are JSON envelopes, so the C++ side never models Rust types. Every
+  USB call runs on a dedicated `QThread`, so the window never blocks on libusb
+  transfers or timeouts.
 - **Language**: the selector in the navigation rail switches between 简体中文
   and English; `--lang=en|zh` overrides the first-start choice. The initial
   language follows the system locale (`zh*` → Chinese, otherwise English). If
@@ -61,9 +62,9 @@ Developer flags: `--smoke-test` (start, then quit), `--screenshot=FILE` and
 Platform notes:
 
 - **Linux**: requires the Qt 6 runtime (`qt6-base`); for native Wayland also
-  install `qt6-wayland` (otherwise Qt uses XWayland). `libauroku_ffi.so` must
-  stay next to the GUI binary. USB access usually needs root or a matching udev
-  rule. The GUI is a normal dynamic Qt application and cannot be fully static.
+  install `qt6-wayland` (otherwise Qt uses XWayland). USB access usually needs
+  root or a matching udev rule. The GUI is a normal dynamic Qt application; the
+  Rust backend is linked into the executable and cannot be fully static.
 - **Windows**: Qt DLLs and plugins are deployed next to `auroku-gui.exe` by
   `windeployqt`; no separate Qt installation is required.
 - **macOS**: `build-macos.sh` produces `dist/auroku-gui.app` (native
@@ -126,13 +127,13 @@ Static linking status:
 | Linux CLI (`auroku`) | **Fully static**: musl + static CRT, no `DT_NEEDED`, no `PT_INTERP` |
 | Windows CLI (`auroku.exe`) | Static CRT (`crt-static`); system DLLs such as `kernel32`/`user32` are provided by Windows and cannot be static |
 | macOS CLI | libSystem and system frameworks must be dynamic (macOS limitation); Rust dependencies and libusb are static |
-| Linux GUI (`auroku-gui-linux-x86_64`) | Dynamically linked Qt 6 application; ship `libauroku_ffi.so` next to it; **cannot** be fully static |
+| Linux GUI (`auroku-gui-linux-x86_64`) | Dynamically linked Qt 6 application; Rust backend linked in; **cannot** be fully static |
 | Windows GUI (`auroku-gui.exe`) | Qt 6 DLLs and plugins are bundled next to the executable |
 | macOS GUI (`auroku-gui.app`) | Qt 6 frameworks are deployed into the bundle by `macdeployqt` |
 
-The Linux GUI is a regular dynamically linked Qt 6 application; the static musl
-target only applies to the CLI. Install the Qt 6 runtime (`qt6-base`) or ship the
-Qt libraries alongside the binary.
+The Linux GUI is a regular dynamically linked Qt 6 application; the Rust
+backend is linked into the executable. Install the Qt 6 runtime (`qt6-base`) or
+ship the Qt libraries alongside the binary.
 
 ### Static linking verification
 
@@ -147,6 +148,12 @@ ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
 `build-linux.sh` performs these checks after the build and exits on failure.
+The Rust backend is linked into the GUI as well, so the GUI must not reference
+the old bridge library:
+
+```bash
+readelf -d dist/auroku-gui-linux-x86_64 | grep libauroku_ffi   # no output
+```
 
 Windows CLI (GNU build; the MSVC build links the CRT statically as well):
 
@@ -158,8 +165,8 @@ objdump -p dist\auroku.exe | Select-String 'DLL Name'
 
 `build-windows.ps1` performs this check automatically and fails if a MinGW, Qt
 or FFI DLL leaks into the CLI. The Qt GUI is intentionally **not** static: it
-loads Qt 6 and `auroku_ffi.dll` at runtime. The FFI DLL itself links Rust,
-libusb and the C runtime statically and only imports Windows system DLLs.
+loads Qt 6 at runtime, while the Rust backend, libusb and their dependencies are
+linked directly into `auroku-gui.exe`.
 
 Linux builds require `musl-gcc` and kernel UAPI headers:
 
@@ -246,7 +253,7 @@ The workflow in `.github/workflows/build.yml` runs **tests → three-platform bu
 Artifacts (each package contains the CLI and the Qt 6 GUI):
 
 - `auroku-windows-x86_64.zip` (static-CRT CLI + GUI folder with the Qt runtime)
-- `auroku-linux-x86_64.tar.gz` (static musl CLI + Qt 6 GUI + `libauroku_ffi.so`)
+- `auroku-linux-x86_64.tar.gz` (static musl CLI + Qt 6 GUI)
 - `auroku-macos-universal.zip` (universal CLI + `auroku-gui.app`)
 
 The Linux GUI is built on `ubuntu-22.04` against the Qt 6.8 SDK installed by the

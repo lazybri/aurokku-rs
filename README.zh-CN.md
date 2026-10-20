@@ -25,9 +25,9 @@
 对话框），提供浅色 / 深色两套配色，并支持中英文 UI。
 
 - **架构**：`crates/auroku-ffi` 将 `auroku_scan_devices` 与 `auroku_run_task`
-  导出为共享库（`auroku_ffi.dll`、`libauroku_ffi.so` 或 `libauroku_ffi.dylib`）。
-  请求与响应都使用 JSON 信封，C++ 侧无需建模 Rust 类型。所有 USB 调用在独立
-  `QThread` 上执行，界面不会因 libusb 传输或超时而卡住。
+  通过静态 C ABI 库（`libauroku_ffi.a` / `auroku_ffi.lib`）直接链接进 GUI
+  可执行文件。请求与响应都使用 JSON 信封，C++ 侧无需建模 Rust 类型。所有 USB
+  调用在独立 `QThread` 上执行，界面不会因 libusb 传输或超时而卡住。
 - **界面语言**：可在导航栏的语言选择器中切换简体中文 / English，或用
   `--lang=en|zh` 指定。首次启动根据系统区域自动选择（`zh*` 为中文，其他为
   英文）。若系统没有可用的 CJK 字体，会自动回退到 English。
@@ -54,9 +54,9 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
 平台说明：
 
 - **Linux**：需要 Qt 6 运行时（`qt6-base`）；原生 Wayland 会话还需安装
-  `qt6-wayland`（否则 Qt 会使用 XWayland）。`libauroku_ffi.so` 必须与 GUI 二进制
-  放在同一目录。访问 USB 设备通常需要 root 或对应 udev 规则。GUI 是普通的动态
-  链接 Qt 应用，无法做成全静态。
+  `qt6-wayland`（否则 Qt 会使用 XWayland）。访问 USB 设备通常需要 root 或对应
+  udev 规则。GUI 是普通的动态链接 Qt 应用；Rust 后端已静态链接进可执行文件，
+  因此无法做成全静态。
 - **Windows**：`windeployqt` 会把 Qt DLL 与插件部署到 `auroku-gui.exe` 旁边，
   无需单独安装 Qt。
 - **macOS**：`build-macos.sh` 产出 `dist/auroku-gui.app`（本机架构），并在可用时
@@ -110,12 +110,12 @@ Build Tools 或 MinGW-w64）。Qt GUI 还需要 Qt 6.5+、CMake 3.21+ 与 Ninja�
 | Linux CLI (`auroku`) | **完全静态**：musl + 静态 CRT，无 `DT_NEEDED`、无 `PT_INTERP` |
 | Windows CLI (`auroku.exe`) | 静态 CRT（`crt-static`）；`kernel32`/`user32` 等系统 DLL 由 Windows 提供，无法静态 |
 | macOS CLI | libSystem 与系统框架必须动态链接（macOS 限制）；Rust 依赖与 libusb 静态 |
-| Linux GUI (`auroku-gui-linux-x86_64`) | 动态链接 Qt 6；需与 `libauroku_ffi.so` 放在同一目录；**不能**全静态 |
+| Linux GUI (`auroku-gui-linux-x86_64`) | 动态链接 Qt 6；Rust 后端已链接进可执行文件；**不能**全静态 |
 | Windows GUI (`auroku-gui.exe`) | Qt 6 DLL 与插件随可执行文件一起分发 |
 | macOS GUI (`auroku-gui.app`) | Qt 6 框架由 `macdeployqt` 放入 app bundle |
 
-Linux GUI 是普通的动态链接 Qt 6 应用；静态 musl 目标只用于 CLI。请安装 Qt 6
-运行时（`qt6-base`），或将 Qt 库与二进制一起分发。
+Linux GUI 是普通的动态链接 Qt 6 应用；Rust 后端已链接进可执行文件。请安装
+Qt 6 运行时（`qt6-base`），或将 Qt 库与二进制一起分发。
 
 ### 静态链接验证
 
@@ -130,6 +130,11 @@ ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
 `build-linux.sh` 在构建结束后会自动执行上述静态性检查，失败时直接退出。
+Rust 后端也已链接进 GUI，因此 GUI 不应再引用旧的共享库：
+
+```bash
+readelf -d dist/auroku-gui-linux-x86_64 | grep libauroku_ffi   # 无输出
+```
 
 Windows CLI（GNU 构建；MSVC 构建同样静态链接 CRT）：
 
@@ -140,9 +145,8 @@ objdump -p dist\auroku.exe | Select-String 'DLL Name'
 ```
 
 `build-windows.ps1` 会自动执行该检查，一旦 CLI 意外依赖 MinGW / Qt / FFI DLL
-就会直接失败。Qt GUI 有意**不是**静态的：它在运行时加载 Qt 6 与
-`auroku_ffi.dll`；而 FFI DLL 本身静态链接 Rust、libusb 和 C 运行库，只依赖
-Windows 系统 DLL。
+就会直接失败。Qt GUI 有意**不是**全静态的：它在运行时加载 Qt 6，而 Rust 后端、
+libusb 及其依赖都已直接链接进 `auroku-gui.exe`。
 
 Linux 构建需要 `musl-gcc` 与内核 UAPI 头文件：
 
@@ -224,7 +228,7 @@ chmod +x build-macos.sh
 产物（每个包内均包含 CLI 与 Qt 6 GUI）：
 
 - `auroku-windows-x86_64.zip`（静态 CRT CLI + 含 Qt 运行时的 GUI 目录）
-- `auroku-linux-x86_64.tar.gz`（musl 静态 CLI + Qt 6 GUI + `libauroku_ffi.so`）
+- `auroku-linux-x86_64.tar.gz`（musl 静态 CLI + Qt 6 GUI）
 - `auroku-macos-universal.zip`（通用 CLI + `auroku-gui.app`）
 
 Linux GUI 在 `ubuntu-22.04` 上针对工作流安装的 Qt 6.8 SDK 构建；目标机需要
