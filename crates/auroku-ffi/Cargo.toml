@@ -1,0 +1,15 @@
+[package]
+name = "auroku-ffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "C ABI bridge for the auroku Rust backend (used by the Qt front-end)"
+license = "MIT"
+
+[lib]
+name = "auroku_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+auroku = { path = "../.." }
+serde_json = "1"

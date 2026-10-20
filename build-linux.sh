@@ -2,9 +2,8 @@
 #
 # Build auroku locally on Linux.
 #
-# The CLI is a fully static musl binary. The GUI is built against the host
-# glibc and uses system graphics libraries at runtime (Wayland/X11/OpenGL),
-# which cannot be fully static.
+# The CLI is a fully static musl binary. The Qt 6 GUI is a normal dynamically
+# linked application; the static musl target only applies to the CLI.
 #
 # Usage:
 #   ./build-linux.sh
@@ -12,7 +11,8 @@
 #
 # Output:
 #   dist/auroku-linux-x86_64       (fully static CLI)
-#   dist/auroku-gui-linux-x86_64   (GUI, dynamic system graphics libraries)
+#   dist/auroku-gui-linux-x86_64   (Qt 6 GUI, requires Qt 6 runtime libraries)
+#   dist/libauroku_ffi.so          (Rust bridge, keep next to the GUI binary)
 #
 set -euo pipefail
 
@@ -22,7 +22,8 @@ usage() {
     cat <<'EOF'
 Usage: ./build-linux.sh
 
-Builds a fully static x86_64 Linux CLI against musl and the host glibc GUI.
+Builds a fully static x86_64 Linux CLI against musl and, when Qt 6 is
+available, the C++ Qt Widgets GUI against the host glibc.
 
 Requirements:
   - Rust toolchain with the x86_64-unknown-linux-musl target (rustup)
@@ -30,11 +31,15 @@ Requirements:
       Debian/Ubuntu: sudo apt-get install musl-tools linux-libc-dev
       Fedora:        sudo dnf install musl-gcc kernel-headers
       Arch:          sudo pacman -S musl linux-api-headers
+  - GUI only: Qt 6.5+, CMake and Ninja
+      Debian/Ubuntu: sudo apt-get install qt6-base-dev cmake ninja-build
+      Fedora:        sudo dnf install qt6-qtbase-devel cmake ninja-build
+      Arch:          sudo pacman -S qt6-base cmake ninja
 
 Output:
   dist/auroku-linux-x86_64       static ELF, no runtime dependencies
-  dist/auroku-gui-linux-x86_64   GUI; dynamic libc/libm/libgcc_s + system
-                                 Wayland/X11/OpenGL at runtime
+  dist/auroku-gui-linux-x86_64   Qt 6 GUI; needs the Qt 6 runtime libraries
+  dist/libauroku_ffi.so          Rust bridge; keep next to the GUI binary
 EOF
 }
 
@@ -138,34 +143,60 @@ if command -v readelf >/dev/null 2>&1 && readelf -d "$OUT" | grep -q 'NEEDED'; t
     exit 1
 fi
 
-# --- GUI: host glibc, minimal dynamic dependencies --------------------------
-# A static musl GUI cannot work: winit/glutin load Wayland/X11/OpenGL with
-# dlopen, and static musl does not support dynamic loading. Build the GUI
-# against the host glibc and avoid libudev via PKG_CONFIG=/bin/false.
-echo "==> cargo build --release --locked --features gui --bin auroku-gui (host glibc)"
-env -u RUSTFLAGS -u C_INCLUDE_PATH \
-    cargo build --release --locked --features gui --bin auroku-gui
+# --- GUI: Qt 6 Widgets front-end --------------------------------------------
+# The C++ GUI links the Rust backend through libauroku_ffi.so and needs the
+# Qt 6 development files. It cannot be built against musl, so the host
+# toolchain is used. PKG_CONFIG=/bin/false still avoids linking libudev into
+# the Rust bridge.
+QT_PREFIX="${QT_PREFIX:-${QT_ROOT_DIR:-}}"
+GUI_BUILD="build/gui-linux"
+GUI_BIN="$GUI_BUILD/auroku-gui"
+GUI_BUILT=0
 
-GUI_OUT="target/release/auroku-gui"
+if ! command -v cmake >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
+    echo "warning: cmake/ninja not found; skipping the Qt GUI." >&2
+    echo "         Debian/Ubuntu: sudo apt-get install cmake ninja-build" >&2
+else
+    CMAKE_ARGS=(-S gui -B "$GUI_BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release)
+    if [[ -n "$QT_PREFIX" ]]; then
+        CMAKE_ARGS+=("-DCMAKE_PREFIX_PATH=$QT_PREFIX")
+    fi
 
-if [[ ! -x "$GUI_OUT" ]]; then
-    echo "error: GUI build output not found: $GUI_OUT" >&2
-    exit 1
+    if env -u RUSTFLAGS -u C_INCLUDE_PATH cmake "${CMAKE_ARGS[@]}" >/dev/null; then
+        echo "==> cmake --build $GUI_BUILD (Qt 6 GUI)"
+        env -u RUSTFLAGS -u C_INCLUDE_PATH cmake --build "$GUI_BUILD"
+        GUI_BUILT=1
+    else
+        echo "warning: Qt 6 development files not found; skipping the GUI." >&2
+        echo "         Debian/Ubuntu: sudo apt-get install qt6-base-dev" >&2
+        echo "         Fedora:        sudo dnf install qt6-qtbase-devel" >&2
+        echo "         Arch:          sudo pacman -S qt6-base" >&2
+    fi
 fi
 
 mkdir -p dist
 DIST="dist/auroku-linux-x86_64"
-GUI_DIST="dist/auroku-gui-linux-x86_64"
 cp "$OUT" "$DIST"
-cp "$GUI_OUT" "$GUI_DIST"
-chmod +x "$DIST" "$GUI_DIST"
+chmod +x "$DIST"
 
 echo
 file "$OUT"
-file "$GUI_OUT"
-echo
 echo "Static CLI: $DIST"
-echo "GUI:        $GUI_DIST (dynamic system graphics libraries)"
-echo
-echo "Note: the GUI intentionally uses the host glibc; its Rust dependencies and"
-echo "      libusb are static. Wayland/X11/OpenGL are loaded at runtime."
+
+if [[ "$GUI_BUILT" -eq 1 ]]; then
+    GUI_DIST="dist/auroku-gui-linux-x86_64"
+    FFI_DIST="dist/libauroku_ffi.so"
+    FFI_SOURCE="$GUI_BUILD/libauroku_ffi.so"
+    if [[ ! -f "$FFI_SOURCE" ]]; then
+        FFI_SOURCE="target/release/libauroku_ffi.so"
+    fi
+    cp "$GUI_BIN" "$GUI_DIST"
+    cp "$FFI_SOURCE" "$FFI_DIST"
+    chmod +x "$GUI_DIST"
+    file "$GUI_BIN"
+    file "$FFI_DIST"
+    echo "GUI:        $GUI_DIST (Qt 6; requires the Qt 6 runtime libraries)"
+    echo "Bridge:     $FFI_DIST (must stay next to the GUI binary)"
+else
+    echo "GUI:        skipped"
+fi

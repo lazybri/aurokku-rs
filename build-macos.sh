@@ -18,8 +18,8 @@
 #   ./build-macos.sh --help
 #
 # Output:
-#   dist/auroku       (CLI, Mach-O, ad-hoc signed when codesign is available)
-#   dist/auroku-gui   (GUI, Mach-O, ad-hoc signed when codesign is available)
+#   dist/auroku           (CLI, Mach-O, ad-hoc signed when codesign is available)
+#   dist/auroku-gui.app   (Qt 6 GUI bundle, ad-hoc signed when available)
 #
 set -euo pipefail
 
@@ -34,8 +34,11 @@ Usage: ./build-macos.sh [--native | --universal]
   -h, --help    Show this help
 
 Output:
-  dist/auroku       CLI
-  dist/auroku-gui   GUI
+  dist/auroku           CLI (universal or native)
+  dist/auroku-gui.app   Qt 6 GUI bundle (native architecture)
+
+The GUI requires Qt 6.5+ (for example `brew install qt`). The CLI is still a
+fully self-contained Rust binary; the GUI is a normal Qt application bundle.
 EOF
 }
 
@@ -70,10 +73,9 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "error: cargo not found. Install Rust: https://rustup.rs" >&2
     exit 1
 fi
-
 OUT_DIR=dist
 OUT="$OUT_DIR/auroku"
-GUI_OUT="$OUT_DIR/auroku-gui"
+GUI_APP="$OUT_DIR/auroku-gui.app"
 mkdir -p "$OUT_DIR"
 
 if [[ "$MODE" == "native" ]]; then
@@ -95,10 +97,7 @@ if [[ "$MODE" == "native" ]]; then
 
     echo "==> cargo build --release --locked --target $TARGET --bin auroku"
     cargo build --release --locked --target "$TARGET" --bin auroku
-    echo "==> cargo build --release --locked --target $TARGET --features gui --bin auroku-gui"
-    cargo build --release --locked --target "$TARGET" --features gui --bin auroku-gui
     cp "target/$TARGET/release/auroku" "$OUT"
-    cp "target/$TARGET/release/auroku-gui" "$GUI_OUT"
 else
     TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
     if command -v rustup >/dev/null 2>&1; then
@@ -108,8 +107,6 @@ else
     for target in "${TARGETS[@]}"; do
         echo "==> cargo build --release --locked --target $target --bin auroku"
         cargo build --release --locked --target "$target" --bin auroku
-        echo "==> cargo build --release --locked --target $target --features gui --bin auroku-gui"
-        cargo build --release --locked --target "$target" --features gui --bin auroku-gui
     done
 
     # Combine both slices. Each slice is already stripped by [profile.release].
@@ -117,28 +114,67 @@ else
         "target/${TARGETS[0]}/release/auroku" \
         "target/${TARGETS[1]}/release/auroku" \
         -output "$OUT"
-    lipo -create \
-        "target/${TARGETS[0]}/release/auroku-gui" \
-        "target/${TARGETS[1]}/release/auroku-gui" \
-        -output "$GUI_OUT"
 fi
 
-chmod +x "$OUT" "$GUI_OUT"
+chmod +x "$OUT"
 
 # Ad-hoc signature: required for arm64 executables and keeps Gatekeeper happy
 # for locally built binaries. Remove if you sign with a Developer ID instead.
 if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$OUT"
-    codesign --force --sign - "$GUI_OUT"
+fi
+
+# ------------------------------------------------------------------------------
+# Qt 6 GUI (built for the current machine architecture)
+# ------------------------------------------------------------------------------
+QT_PREFIX="${QT_PREFIX:-${QT_ROOT_DIR:-}}"
+if [[ -z "$QT_PREFIX" ]] && command -v brew >/dev/null 2>&1; then
+    QT_PREFIX="$(brew --prefix qt 2>/dev/null || true)"
+fi
+
+GUI_BUILT=0
+if ! command -v cmake >/dev/null 2>&1; then
+    echo "warning: cmake not found; skipping the Qt GUI." >&2
+elif [[ -z "$QT_PREFIX" || ! -d "$QT_PREFIX" ]]; then
+    echo "warning: Qt 6 not found; skipping the GUI." >&2
+    echo "         Install it with: brew install qt" >&2
+else
+    GUI_BUILD="build/gui-macos"
+    echo "==> cmake -S gui -B $GUI_BUILD -DCMAKE_PREFIX_PATH=$QT_PREFIX"
+    cmake -S gui -B "$GUI_BUILD" -DCMAKE_BUILD_TYPE=Release \
+        "-DCMAKE_PREFIX_PATH=$QT_PREFIX"
+    echo "==> cmake --build $GUI_BUILD"
+    cmake --build "$GUI_BUILD"
+
+    rm -rf "$GUI_APP"
+    cp -R "$GUI_BUILD/auroku-gui.app" "$GUI_APP"
+    DEPLOYQT="$QT_PREFIX/bin/macdeployqt"
+    if [[ -x "$DEPLOYQT" ]]; then
+        "$DEPLOYQT" "$GUI_APP" -always-overwrite
+    fi
+    # Keep the offscreen/minimal platform plugins in the bundle so headless
+    # smoke tests and CI runs work without a WindowServer session.
+    for plugin in libqoffscreen.dylib libqminimal.dylib; do
+        source="$QT_PREFIX/plugins/platforms/$plugin"
+        if [[ -f "$source" && -d "$GUI_APP/Contents/PlugIns/platforms" ]]; then
+            cp "$source" "$GUI_APP/Contents/PlugIns/platforms/"
+        fi
+    done
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --deep --sign - "$GUI_APP"
+    fi
+    GUI_BUILT=1
 fi
 
 echo
 if [[ "$MODE" == "universal" ]]; then
     lipo -info "$OUT"
-    lipo -info "$GUI_OUT"
 fi
 file "$OUT"
-file "$GUI_OUT"
 echo "Output: $OUT"
-echo "Output: $GUI_OUT"
+if [[ "$GUI_BUILT" -eq 1 ]]; then
+    echo "Output: $GUI_APP (native architecture; needs Qt 6 runtime frameworks)"
+else
+    echo "GUI:    skipped"
+fi
 

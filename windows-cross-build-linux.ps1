@@ -11,10 +11,9 @@ Usage:
 
 Output: target\x86_64-unknown-linux-musl\release\auroku (static ELF, no runtime deps)
 
-The GUI is intentionally not cross-built here: a static musl binary cannot
-dlopen Wayland/X11/OpenGL, and cross-linking a glibc GUI would require a full
-Linux graphics sysroot. Build the Linux GUI on a Linux box with
-./build-linux.sh, or download it from the GitHub Actions release artifacts.
+The GUI is intentionally not cross-built here: the Qt 6 front-end needs a
+complete Linux Qt sysroot and a C++ cross toolchain. Build it on a Linux box
+with ./build-linux.sh, or download it from the GitHub Actions release artifacts.
 #>
 param(
     [string]$ZigPath = ""

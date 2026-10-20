@@ -16,59 +16,62 @@ the original Python source.
 - USB layout enumeration, SERI echo and SCDP active probe (`--op probe`)
 - Type2Auth 52/53 authentication (`--type2`)
 - Optional JSON output and verbose USB frame logs
-- egui + eframe cross-platform GUI (Material 3, Chinese/English UI, Wayland / Windows / macOS)
+- Qt 6 Widgets GUI (native Qt styling, Chinese/English UI, light/dark themes) driven by the same Rust backend through a C ABI
 
-## GUI front-end (egui / Material 3)
+## GUI front-end (Qt 6 / Widgets)
 
-`auroku-gui` is a desktop front-end sharing the same `auroku` backend library as
-the CLI. The UI uses custom-painted Material 3 components (navigation rail,
-cards, filled / tonal / outlined buttons, switches, segmented buttons, status
-chips, snackbars, confirmation dialogs), with light and dark colour schemes and
-a Chinese/English interface.
+`auroku-gui` is a C++ Qt 6 Widgets front-end that calls the same Rust backend
+through a small C ABI bridge crate (`crates/auroku-ffi`). The UI uses standard
+Qt widgets and a light colour layer on top of them (navigation rail, cards,
+buttons, switches, segmented buttons, status chips, toast notifications and
+confirmation dialogs) with light and dark palettes and a Chinese/English
+interface.
 
-- **Language**: the selector in the top bar switches between 简体中文 and English.
-  On first start the language follows `LANG` / `LC_MESSAGES` / `LC_ALL`
-  (`zh*` → Chinese, other set locales → English; unset → Chinese). If no CJK
-  font is available, the UI falls back to English automatically.
+- **Architecture**: `crates/auroku-ffi` exposes `auroku_scan_devices` and
+  `auroku_run_task` as a shared library (`auroku_ffi.dll`, `libauroku_ffi.so`
+  or `libauroku_ffi.dylib`). Requests and responses are JSON envelopes, so the
+  C++ side never models Rust types. Every USB call runs on a dedicated
+  `QThread`, so the window never blocks on libusb transfers or timeouts.
+- **Language**: the selector in the navigation rail switches between 简体中文
+  and English; `--lang=en|zh` overrides the first-start choice. The initial
+  language follows the system locale (`zh*` → Chinese, otherwise English). If
+  no CJK font is available the UI falls back to English automatically.
+- **Theme**: the moon/sun button switches between light and dark; the dark
+  theme is the default and `--light` starts in the light theme.
 
-All USB operations run on a background thread, so the UI never blocks on libusb
-transfers or timeouts.
+Build requirements: Qt 6.5+, CMake 3.21+ and Ninja, plus the usual Rust
+toolchain. CMake builds the Rust C ABI library automatically.
 
 ```bash
-# Development
-cargo run --features gui --bin auroku-gui
+# Configure & build (Linux / Windows / macOS)
+cmake -S gui -B build/gui -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/gui
 
-# Release (same command on Linux / Windows / macOS)
-cargo build --release --features gui --bin auroku-gui
-
-# Linux: disable pkg-config to avoid linking the host libudev into the GUI
-PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
+# Run
+./build/gui/auroku-gui
 ```
 
-Output: `target/<target>/release/auroku-gui` (`auroku-gui.exe` on Windows).
+On Windows pass `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64` (or `msvc2022_64`);
+`build-windows.ps1` discovers Qt automatically and packages the Qt runtime next
+to the executable.
 
-> The Linux GUI is **dynamically linked**: it depends at least on `libc`, `libm`
-> and `libgcc_s`; Wayland/X11 and OpenGL are loaded at runtime by
-> winit/glutin. It cannot be a fully static, runnable binary. See
-> “Static linking status” below.
+Developer flags: `--smoke-test` (start, then quit), `--screenshot=FILE` and
+`--page=N` (0–6) allow headless UI checks with `QT_QPA_PLATFORM=offscreen`.
 
 Platform notes:
 
-- **Linux**: eframe enables both Wayland and X11; the Wayland `app_id` is
-  `auroku`, and X11/Wayland client libraries are loaded via `dlopen` at runtime.
-  `build-linux.sh` builds the static musl CLI and the host-glibc GUI in one
-  run (`dist/auroku-linux-x86_64` and `dist/auroku-gui-linux-x86_64`). Static
-  musl does not support `dlopen`, so a static GUI cannot start;
-  `PKG_CONFIG=/bin/false` avoids the host `libudev` dependency, and the
-  remaining dynamic dependencies are `libc` / `libm` / `libgcc_s`.
-- **Windows**: native Win32 window + OpenGL (glow), no extra runtime required.
-- **macOS**: native Cocoa window + OpenGL (glow). For a universal binary, build
-  `aarch64-apple-darwin` and `x86_64-apple-darwin` and combine them with `lipo`.
-- **Fonts**: a system CJK font is located at start-up (Noto Sans CJK /
-  Microsoft YaHei / PingFang, etc.). Override it with
+- **Linux**: requires the Qt 6 runtime (`qt6-base`); for native Wayland also
+  install `qt6-wayland` (otherwise Qt uses XWayland). `libauroku_ffi.so` must
+  stay next to the GUI binary. USB access usually needs root or a matching udev
+  rule. The GUI is a normal dynamic Qt application and cannot be fully static.
+- **Windows**: Qt DLLs and plugins are deployed next to `auroku-gui.exe` by
+  `windeployqt`; no separate Qt installation is required.
+- **macOS**: `build-macos.sh` produces `dist/auroku-gui.app` (native
+  architecture) and runs `macdeployqt` when available.
+- **Fonts**: a CJK-capable family is selected at start-up (Microsoft YaHei /
+  Noto Sans CJK / PingFang, …). Override it with
   `AUROKU_GUI_FONT=/path/to/font.ttf`.
-- **Permissions**: USB access on Linux usually requires root or a matching udev
-  rule; on Windows a libusb driver may be required (same as the CLI).
+- **Permissions**: same as the CLI; a libusb driver may be required on Windows.
 
 ### Linux polkit elevation
 
@@ -84,8 +87,11 @@ USB devices directly:
   locale); sensitive variables such as `LD_*`, `PATH` and `HOME` are not.
   World-writable executables are refused.
 - Some Wayland compositors restrict root clients. If root mode cannot connect to
-  the display, try `WINIT_UNIX_BACKEND=x11` (requires XWayland), or configure a
+  the display, try `QT_QPA_PLATFORM=xcb` (requires XWayland), or configure a
   udev rule and run unprivileged.
+- On pure Wayland sessions (no `DISPLAY`) automatic elevation is skipped,
+  because a root client usually cannot connect to the compositor. Use a udev
+  rule, or run with `QT_QPA_PLATFORM=xcb` to elevate through XWayland.
 - Security note: running the whole process as root increases the attack surface.
   If you do not need automatic elevation, skip polkit and configure a udev rule
   for the device.
@@ -98,20 +104,20 @@ the full JSON result.
 
 Requires a Rust toolchain (<https://rustup.rs>). `rusb` uses vendored libusb, so
 a C compiler is also required (`gcc`/`clang` on Linux/macOS, MSVC Build Tools or
-MinGW-w64 on Windows).
+MinGW-w64 on Windows). The Qt GUI additionally needs Qt 6.5+, CMake 3.21+ and
+Ninja.
 
 Each platform has a local build script; artifacts go to `dist/`. The Linux,
 Windows and macOS native scripts build **both the CLI and the GUI**. “Static”
-here refers to Rust/C
-runtime dependencies; whether system libraries and the graphics stack can be
-linked statically is determined by the OS:
+here refers to Rust/C runtime dependencies; whether system libraries and the
+graphics stack can be linked statically is determined by the OS:
 
 | Platform | Command | Artifacts |
 | --- | --- | --- |
-| Linux (static CLI + host glibc GUI) | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64` (static ELF), `dist/auroku-gui-linux-x86_64` (glibc) |
-| Windows (static CRT) | `.\build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui.exe`, `dist\auroku-windows-<arch>.zip` |
-| macOS (universal) | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku`, `dist/auroku-gui` (arm64 + x86_64) |
-| macOS (native arch) | `./build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui` |
+| Linux (static CLI + Qt 6 GUI) | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64` (static ELF), `dist/auroku-gui-linux-x86_64` (Qt 6) |
+| Windows (static CRT) | `.\build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui-windows-<arch>\auroku-gui.exe` (+ Qt runtime), `dist\auroku-windows-<arch>.zip` |
+| macOS (universal CLI + native GUI) | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku` (arm64 + x86_64), `dist/auroku-gui.app` |
+| macOS (native arch) | `./build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui.app` |
 
 Static linking status:
 
@@ -119,14 +125,14 @@ Static linking status:
 | --- | --- |
 | Linux CLI (`auroku`) | **Fully static**: musl + static CRT, no `DT_NEEDED`, no `PT_INTERP` |
 | Windows CLI (`auroku.exe`) | Static CRT (`crt-static`); system DLLs such as `kernel32`/`user32` are provided by Windows and cannot be static |
-| macOS CLI/GUI | libSystem and system frameworks must be dynamic (macOS limitation); Rust dependencies and libusb are static |
-| Linux GUI (`auroku-gui`) | Dynamically linked against glibc and system graphics libraries; **cannot** be fully static |
-| Windows GUI (`auroku-gui.exe`) | Static CRT + system DLLs / OpenGL |
+| macOS CLI | libSystem and system frameworks must be dynamic (macOS limitation); Rust dependencies and libusb are static |
+| Linux GUI (`auroku-gui-linux-x86_64`) | Dynamically linked Qt 6 application; ship `libauroku_ffi.so` next to it; **cannot** be fully static |
+| Windows GUI (`auroku-gui.exe`) | Qt 6 DLLs and plugins are bundled next to the executable |
+| macOS GUI (`auroku-gui.app`) | Qt 6 frameworks are deployed into the bundle by `macdeployqt` |
 
-The Linux GUI relies on winit/glutin loading Wayland/X11/OpenGL via `dlopen` at
-runtime. Static musl binaries do not support `dlopen` and fail with
-`Dynamic loading not supported` / `NoWaylandLib`. Build the GUI against the host
-glibc target; do not use the static musl target.
+The Linux GUI is a regular dynamically linked Qt 6 application; the static musl
+target only applies to the CLI. Install the Qt 6 runtime (`qt6-base`) or ship the
+Qt libraries alongside the binary.
 
 ### Static linking verification
 
@@ -141,6 +147,19 @@ ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
 `build-linux.sh` performs these checks after the build and exits on failure.
+
+Windows CLI (GNU build; the MSVC build links the CRT statically as well):
+
+```powershell
+objdump -p dist\auroku.exe | Select-String 'DLL Name'
+# Expected: KERNEL32.dll, msvcrt.dll, ntdll.dll, bcryptprimitives.dll and
+# api-ms-win-core-synch-*.dll — all shipped by Windows.
+```
+
+`build-windows.ps1` performs this check automatically and fails if a MinGW, Qt
+or FFI DLL leaks into the CLI. The Qt GUI is intentionally **not** static: it
+loads Qt 6 and `auroku_ffi.dll` at runtime. The FFI DLL itself links Rust,
+libusb and the C runtime statically and only imports Windows system DLLs.
 
 Linux builds require `musl-gcc` and kernel UAPI headers:
 
@@ -184,9 +203,8 @@ On Windows you can cross-compile with Zig, without WSL / Docker:
 Output: `target\x86_64-unknown-linux-musl\release\auroku` (x86_64 static ELF, no
 runtime dependencies; USB access requires root or a matching udev rule).
 
-This cross script intentionally ships only the static CLI: a static musl GUI
-cannot `dlopen` Wayland/X11/OpenGL, and cross-linking a glibc GUI would need a
-full Linux graphics sysroot. Build the GUI on Linux with `./build-linux.sh` (or
+This cross script only ships the static CLI: the Qt GUI needs a full Linux Qt 6
+sysroot and a C++ toolchain. Build the GUI on Linux with `./build-linux.sh` (or
 download the Linux archive from the release artifacts).
 
 ### Building the macOS universal binary (arm64 + x86_64)
@@ -198,11 +216,11 @@ chmod +x build-macos.sh
 ./build-macos.sh
 ```
 
-The script builds both binaries for `aarch64-apple-darwin` and
-`x86_64-apple-darwin`, combines each pair with `lipo`, and applies an ad-hoc
-signature.
+The script builds the CLI for `aarch64-apple-darwin` and `x86_64-apple-darwin`,
+combines both slices with `lipo`, applies an ad-hoc signature, and then builds
+the Qt 6 GUI bundle for the current machine architecture.
 
-Output: `dist/auroku` and `dist/auroku-gui` (Apple Silicon + Intel Mac).
+Output: `dist/auroku` (universal CLI) and `dist/auroku-gui.app` (native Qt GUI).
 
 To build only the current machine architecture, use `./build-macos.sh --native`
 (faster).
@@ -225,14 +243,15 @@ The workflow in `.github/workflows/build.yml` runs **tests → three-platform bu
   creates a GitHub Release and uploads all artifacts.
 - **Pushing a `v*` tag**: the same test, build and release flow.
 
-Artifacts (each package contains both `auroku` and `auroku-gui`):
+Artifacts (each package contains the CLI and the Qt 6 GUI):
 
-- `auroku-windows-x86_64.zip`
-- `auroku-linux-x86_64.tar.gz` (static musl CLI + host-glibc GUI)
-- `auroku-macos-universal.zip` (arm64 + x86_64)
+- `auroku-windows-x86_64.zip` (static-CRT CLI + GUI folder with the Qt runtime)
+- `auroku-linux-x86_64.tar.gz` (static musl CLI + Qt 6 GUI + `libauroku_ffi.so`)
+- `auroku-macos-universal.zip` (universal CLI + `auroku-gui.app`)
 
-The Linux GUI is built on `ubuntu-22.04`, so it requires glibc 2.35 or newer;
-the CLI in the same package remains fully static.
+The Linux GUI is built on `ubuntu-22.04` against the Qt 6.8 SDK installed by the
+workflow; install the Qt 6 runtime on the target system (or bundle the libraries
+yourself). The CLI in the same package remains fully static.
 
 > Windows/Linux hosts cannot cross-compile macOS binaries directly: the vendored
 > libusb needs IOKit/CoreFoundation headers and link stubs from the Apple SDK,

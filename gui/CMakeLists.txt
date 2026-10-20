@@ -1,0 +1,172 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(auroku-qt VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Generate compile_commands.json so editors (C/C++ IntelliSense) resolve every
+# Qt/STL include without hard-coded include paths.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
+qt_standard_project_setup()
+
+set(AUROKU_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+
+# ------------------------------------------------------------------------------
+# Rust backend (C ABI shared library)
+# ------------------------------------------------------------------------------
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(AUROKU_CARGO_FLAGS "")
+    set(AUROKU_PROFILE_DIR "debug")
+else()
+    set(AUROKU_CARGO_FLAGS "--release")
+    set(AUROKU_PROFILE_DIR "release")
+endif()
+
+set(FFI_TARGET_DIR "${AUROKU_ROOT}/target/${AUROKU_PROFILE_DIR}")
+
+if(WIN32)
+    set(FFI_LIBRARY "${FFI_TARGET_DIR}/auroku_ffi.dll")
+    if(MSVC)
+        set(FFI_IMPLIB "${FFI_TARGET_DIR}/auroku_ffi.dll.lib")
+    else()
+        set(FFI_IMPLIB "${FFI_TARGET_DIR}/libauroku_ffi.dll.a")
+    endif()
+elseif(APPLE)
+    set(FFI_LIBRARY "${FFI_TARGET_DIR}/libauroku_ffi.dylib")
+else()
+    set(FFI_LIBRARY "${FFI_TARGET_DIR}/libauroku_ffi.so")
+endif()
+
+add_custom_target(auroku_ffi_build ALL
+    COMMAND "${CARGO_EXECUTABLE}" build --locked --manifest-path "${AUROKU_ROOT}/Cargo.toml"
+            -p auroku-ffi ${AUROKU_CARGO_FLAGS}
+    WORKING_DIRECTORY "${AUROKU_ROOT}"
+    COMMENT "Building auroku-ffi (Rust C ABI, ${AUROKU_PROFILE_DIR})"
+    VERBATIM)
+
+add_library(auroku_ffi SHARED IMPORTED GLOBAL)
+set_target_properties(auroku_ffi PROPERTIES IMPORTED_LOCATION "${FFI_LIBRARY}")
+if(WIN32)
+    set_target_properties(auroku_ffi PROPERTIES IMPORTED_IMPLIB "${FFI_IMPLIB}")
+endif()
+
+# ------------------------------------------------------------------------------
+# Qt application
+# ------------------------------------------------------------------------------
+set(APP_SOURCES
+    src/main.cpp
+
+    src/core/AppState.h
+    src/core/AppState.cpp
+    src/core/FfiApi.h
+    src/core/JsonHelpers.h
+    src/core/JsonHelpers.cpp
+    src/core/PageHost.h
+    src/core/RustBridge.h
+    src/core/RustBridge.cpp
+    src/core/RustWorker.h
+    src/core/RustWorker.cpp
+
+    src/platform/Elevate.h
+    src/platform/Elevate.cpp
+
+    src/ui/ConfirmDialog.h
+    src/ui/ConfirmDialog.cpp
+    src/ui/Fonts.h
+    src/ui/Fonts.cpp
+    src/ui/I18n.h
+    src/ui/I18n.cpp
+    src/ui/Icons.h
+    src/ui/Icons.cpp
+    src/ui/MainWindow.h
+    src/ui/MainWindow.cpp
+    src/ui/Page.h
+    src/ui/Page.cpp
+    src/ui/Theme.h
+    src/ui/Theme.cpp
+    src/ui/Widgets.h
+    src/ui/Widgets.cpp
+
+    src/ui/pages/BatchPage.h
+    src/ui/pages/BatchPage.cpp
+    src/ui/pages/ConsolePage.h
+    src/ui/pages/ConsolePage.cpp
+    src/ui/pages/OverviewPage.h
+    src/ui/pages/OverviewPage.cpp
+    src/ui/pages/PinPage.h
+    src/ui/pages/PinPage.cpp
+    src/ui/pages/ProbePage.h
+    src/ui/pages/ProbePage.cpp
+    src/ui/pages/SessionPage.h
+    src/ui/pages/SessionPage.cpp
+    src/ui/pages/UimPage.h
+    src/ui/pages/UimPage.cpp)
+
+qt_add_executable(auroku-qt WIN32 MACOSX_BUNDLE ${APP_SOURCES})
+
+set_target_properties(auroku-qt PROPERTIES OUTPUT_NAME "auroku-gui")
+
+add_dependencies(auroku-qt auroku_ffi_build)
+target_link_libraries(auroku-qt PRIVATE Qt6::Widgets auroku_ffi)
+target_include_directories(auroku-qt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_definitions(auroku-qt PRIVATE AUROKU_APP_VERSION="${PROJECT_VERSION}")
+
+if(MSVC)
+    # /utf-8 is required: all sources are UTF-8 and contain Chinese literals.
+    target_compile_options(auroku-qt PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+else()
+    target_compile_options(auroku-qt PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(WIN32)
+    add_custom_command(TARGET auroku-qt POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${FFI_LIBRARY}"
+                "$<TARGET_FILE_DIR:auroku-qt>"
+        COMMENT "Copying auroku_ffi.dll next to the executable")
+endif()
+
+if(UNIX AND NOT APPLE)
+    # The Rust bridge is a shared library. Keep a copy next to the executable
+    # and add $ORIGIN to the run path so both the build tree and the packaged
+    # dist/ directory work without absolute build-machine paths.
+    add_custom_command(TARGET auroku-qt POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${FFI_LIBRARY}"
+                "$<TARGET_FILE_DIR:auroku-qt>"
+        COMMENT "Copying libauroku_ffi.so next to the executable")
+    target_link_options(auroku-qt PRIVATE "-Wl,-rpath,$ORIGIN")
+endif()
+
+# ------------------------------------------------------------------------------
+# Deployment helpers
+# ------------------------------------------------------------------------------
+if(WIN32)
+    find_program(AUROKU_WINDEPLOYQT NAMES windeployqt6 windeployqt
+        HINTS "${QT6_INSTALL_PREFIX}/bin" "${CMAKE_PREFIX_PATH}/bin")
+    if(AUROKU_WINDEPLOYQT)
+        add_custom_command(TARGET auroku-qt POST_BUILD
+            COMMAND "${AUROKU_WINDEPLOYQT}" --no-translations --no-system-d3d-compiler
+                    --compiler-runtime "$<TARGET_FILE:auroku-qt>"
+            COMMENT "Deploying Qt runtime with windeployqt"
+            VERBATIM)
+    endif()
+endif()
+
+if(APPLE)
+    set_target_properties(auroku-qt PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "auRokku"
+                                               MACOSX_BUNDLE_GUI_IDENTIFIER "dev.auroku.gui")
+    target_link_options(auroku-qt PRIVATE "-Wl,-rpath,@executable_path")
+    add_custom_command(TARGET auroku-qt POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${FFI_LIBRARY}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:auroku-qt>/MacOS"
+        # rustc may record an absolute install name for the cdylib. Make the
+        # copied dylib relocatable and point the executable at it.
+        COMMAND /bin/sh -c "install_name_tool -id @rpath/libauroku_ffi.dylib '$<TARGET_BUNDLE_CONTENT_DIR:auroku-qt>/MacOS/libauroku_ffi.dylib' 2>/dev/null || true"
+        COMMAND /bin/sh -c "install_name_tool -change '${FFI_LIBRARY}' '@rpath/libauroku_ffi.dylib' '$<TARGET_FILE:auroku-qt>' 2>/dev/null || true"
+        COMMENT "Copying libauroku_ffi.dylib into the bundle")
+endif()
