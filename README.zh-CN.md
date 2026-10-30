@@ -195,7 +195,7 @@ chmod +x build-macos.sh
 
 - **Pull request**：只运行 `cargo fmt --check`、`cargo clippy -D warnings`
   与 `cargo test`。
-- **手动触发（workflow_dispatch）**：填写版本号（如 `v0.1.0`，省略 `v`
+- **手动触发（workflow_dispatch）**：填写版本号（如 `v0.2.0`，省略 `v`
   会自动补全），可选预发布 / 草稿。工作流会先跑测试，再并行构建
   Windows、Linux（musl 静态）与 macOS 通用二进制，最后自动创建
   GitHub Release 并上传全部产物。

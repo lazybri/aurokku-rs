@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "发布版本号（如 v0.1.0；省略 v 会自动补全）"
+        description: "发布版本号（如 v0.2.0；省略 v 会自动补全）"
         required: true
         type: string
       prerelease:
