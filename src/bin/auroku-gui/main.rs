@@ -11,9 +11,9 @@
 //! - macOS: native Cocoa window + OpenGL (glow).
 
 mod app;
-mod elevate;
 mod fonts;
 mod i18n;
+mod permissions;
 mod theme;
 mod widgets;
 mod worker;
@@ -24,13 +24,17 @@ use std::ffi::OsStr;
 fn main() -> eframe::Result {
     i18n::set(i18n::Language::from_env());
 
+    if let Some(code) = permissions::run_privileged_helper() {
+        std::process::exit(code);
+    }
+
     if handle_cli_args() {
         return Ok(());
     }
 
-    // Linux only: try to obtain root through polkit so USB transfers are
-    // permitted. This returns immediately when disabled or already elevated.
-    elevate::maybe_elevate();
+    if permissions::refuse_root_execution() {
+        std::process::exit(1);
+    }
 
     let options = eframe::NativeOptions {
         // `with_app_id` is what Wayland compositors use for window matching and
@@ -52,7 +56,7 @@ fn main() -> eframe::Result {
     )
 }
 
-/// Intercept the few CLI flags the GUI understands before any polkit prompt.
+/// Intercept the CLI flags the GUI understands.
 /// Returns `true` when the process should exit without opening a window.
 fn handle_cli_args() -> bool {
     for arg in std::env::args_os().skip(1) {
@@ -61,17 +65,16 @@ fn handle_cli_args() -> bool {
             println!(
                 "auRokku GUI — SERI / Type2Auth device tool\n\
                  \n\
-                 Usage: auroku-gui [--no-polkit]\n\
+                 Usage: auroku-gui\n\
                  \n\
                  Options:\n\
-                   --no-polkit    Skip Linux polkit / pkexec elevation at startup\n\
                    -h, --help     Show this help\n\
                    -V, --version  Show version\n\
                  \n\
                  The interface language follows LANG / LC_ALL (zh* = Chinese, otherwise\n\
                  English) and can be switched in the top bar.\n\
-                 Linux: root is requested through pkexec by default; set\n\
-                 AUROKU_GUI_NO_POLKIT=1 to skip."
+                 Linux: run as a normal user. Select a USB device to request\n\
+                 permission for that device only. The GUI refuses to run as root."
             );
             return true;
         }

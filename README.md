@@ -67,28 +67,25 @@ Platform notes:
 - **Fonts**: a system CJK font is located at start-up (Noto Sans CJK /
   Microsoft YaHei / PingFang, etc.). Override it with
   `AUROKU_GUI_FONT=/path/to/font.ttf`.
-- **Permissions**: USB access on Linux usually requires root or a matching udev
-  rule; on Windows a libusb driver may be required (same as the CLI).
+- **Permissions**: the Linux GUI runs unprivileged and requests device-scoped
+  USB access after selection. Windows may require a libusb driver (same as the
+  CLI).
 
-### Linux polkit elevation
+### Linux USB permissions
 
-On Linux the GUI requests root through `pkexec` (polkit) at start-up by default.
-After successful authentication it re-executes itself as root so it can access
-USB devices directly:
+The GUI never runs as root and does not require a VID/PID-specific udev rule.
+Scan and select the intended device in the GUI; only then does it request
+polkit authorization to grant the logged-in user read/write ACL access to that
+device's `/dev/bus/usb/BBB/DDD` node. The privileged helper rechecks the
+selected VID, PID, bus and address before applying the ACL, and only changes
+that USB node. On normal GUI shutdown, the GUI requests polkit authorization
+once to restore the previous ACL (or remove the entry it added) for all devices
+authorized during that session. If authorization is canceled or the process
+does not shut down cleanly, the ACL remains until the device node is removed.
 
-- Skip elevation with `--no-polkit` or `AUROKU_GUI_NO_POLKIT=1`.
-- If authentication is cancelled, polkit is unavailable or `pkexec` is missing,
-  the app continues as a normal user and shows a permission warning on the
-  overview page; USB operations may fail due to insufficient permissions.
-- Only display / session / locale variables are forwarded (Wayland, X11, DBus,
-  locale); sensitive variables such as `LD_*`, `PATH` and `HOME` are not.
-  World-writable executables are refused.
-- Some Wayland compositors restrict root clients. If root mode cannot connect to
-  the display, try `WINIT_UNIX_BACKEND=x11` (requires XWayland), or configure a
-  udev rule and run unprivileged.
-- Security note: running the whole process as root increases the attack surface.
-  If you do not need automatic elevation, skip polkit and configure a udev rule
-  for the device.
+The Linux `acl` package (providing `getfacl` and `setfacl`) and polkit must be installed.
+Canceling authorization leaves the GUI unprivileged and USB operations disabled
+for that device. The GUI refuses to start as root.
 
 The GUI’s Overview / UIM Lock / PIN & ICCID / Probe / Batch / Session / Console
 pages cover every CLI `--op` operation. The console page shows USB TX/RX logs and

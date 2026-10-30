@@ -53,11 +53,8 @@ $arch = switch -Wildcard ($Target) {
     default    { 'x86_64' }
 }
 
-Write-Host "==> cargo build --release --locked --target $Target --bin auroku (static CRT)"
-cargo build --release --locked --target $Target --bin auroku
-
-Write-Host "==> cargo build --release --locked --target $Target --features gui --bin auroku-gui (static CRT)"
-cargo build --release --locked --target $Target --features gui --bin auroku-gui
+Write-Host "==> cargo build --release --locked --target $Target --features gui --bins (static CRT)"
+cargo build --release --locked --target $Target --features gui --bins
 
 $built = Join-Path $PSScriptRoot "target\$Target\release\auroku.exe"
 $builtGui = Join-Path $PSScriptRoot "target\$Target\release\auroku-gui.exe"

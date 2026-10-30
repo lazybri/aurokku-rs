@@ -59,23 +59,21 @@ PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
   `aarch64-apple-darwin` 与 `x86_64-apple-darwin` 后用 `lipo` 合并。
 - **字体**：启动时自动查找系统 CJK 字体（Noto Sans CJK / 微软雅黑 / 苹方等）。
   可通过环境变量 `AUROKU_GUI_FONT=/path/to/font.ttf` 指定字体文件。
-- **权限**：Linux 访问 USB 设备通常需要 root 或对应 udev 规则；Windows 可能
-  需要安装 libusb 驱动（与 CLI 相同）。
+- **权限**：Linux GUI 始终以普通用户运行；选择设备后才会请求该设备的 USB
+  权限。Windows 可能需要安装 libusb 驱动（与 CLI 相同）。
 
-### Linux polkit 提权
+### Linux USB 权限
 
-Linux 上 GUI 启动时会默认调用 `pkexec`（polkit）请求 root 权限，认证成功后以
-root 重新执行自身，从而直接访问 USB 设备：
+GUI 始终以普通用户运行，不需要写死 VID/PID 的 udev 规则。请先在界面扫描并
+选择目标设备；之后程序才会请求 polkit 授权，为当前登录用户授予该设备
+`/dev/bus/usb/BBB/DDD` 节点的读写 ACL。提权辅助进程会再次核对所选设备的
+VID、PID、总线号和地址，且只修改该 USB 设备节点。设备拔出或节点移除后，
+对应 ACL 随节点一起消失。GUI 正常关闭时，会通过 polkit 一次性恢复本次运行中
+所有已授权设备的原 ACL（或移除本程序添加的 ACL 条目）。若取消该授权或进程未能
+正常退出，ACL 会保留至设备节点移除。
 
-- 跳过提权：启动参数 `--no-polkit`，或环境变量 `AUROKU_GUI_NO_POLKIT=1`。
-- 认证取消、polkit 不可用或 `pkexec` 缺失：程序会以普通用户继续运行，概览页
-  显示权限警告；USB 操作可能因权限不足而失败。
-- 提权时只转发显示 / 会话 / 语言相关环境变量（Wayland、X11、DBus、locale），
-  不会转发 `LD_*`、`PATH`、`HOME` 等敏感变量；世界可写的可执行文件会被拒绝提权。
-- 部分 Wayland 合成器可能限制 root 客户端。如果 root 模式无法连接显示，可尝试
-  `WINIT_UNIX_BACKEND=x11`（需要 XWayland），或配置 udev 规则并以普通用户运行。
-- 安全提示：整进程以 root 运行会扩大攻击面。若不需要自动提权，可跳过 polkit
-  并仅为设备配置 udev 规则。
+需要安装 Linux `acl` 软件包（提供 `getfacl` 和 `setfacl`）和 polkit。取消设备授权后 GUI
+仍以普通用户运行，但该设备的 USB 操作不可用。GUI 拒绝以 root 启动。
 
 GUI 中的“概览 / UIM 锁 / PIN & ICCID / 探测 / 批量 / 会话 / 控制台”页面覆盖了
 CLI 的全部 `--op` 操作，并在控制台页面显示 USB TX / RX 日志和完整 JSON 结果。
@@ -285,4 +283,3 @@ auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
   反推 11 位序列号。
 - 错误类型名（`ValueError` / `RuntimeError` / `TimeoutError`）与退出码
   （失败为 1）均与 Python 版保持一致。
-

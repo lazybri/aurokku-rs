@@ -10,6 +10,7 @@ use eframe::egui::{
 use serde_json::Value;
 
 use crate::i18n::{self, Language};
+use crate::permissions::{self, GrantedDevice};
 use crate::theme::{self, M3Colors};
 use crate::widgets::{
     self, banner, button, card, card_header, chip, code_block, empty_state, icon_button, kv_row,
@@ -93,6 +94,10 @@ enum Confirm {
     MaintenanceBit { control: u8 },
 }
 
+fn device_key(device: &DeviceSummary) -> (u16, u16, u8, u8) {
+    (device.vid, device.pid, device.bus, device.address)
+}
+
 impl Confirm {
     fn title(&self) -> &'static str {
         match self {
@@ -161,6 +166,9 @@ pub struct AurokuApp {
     // Discovery
     devices: Vec<DeviceSummary>,
     selected_device: Option<usize>,
+    permission_pending: bool,
+    authorized_device: Option<(u16, u16, u8, u8)>,
+    granted_devices: Vec<GrantedDevice>,
     scanning: bool,
     scan_error: Option<String>,
 
@@ -231,6 +239,9 @@ impl AurokuApp {
             type2: false,
             devices: Vec::new(),
             selected_device: None,
+            permission_pending: false,
+            authorized_device: None,
+            granted_devices: Vec::new(),
             scanning: true,
             scan_error: None,
             busy: false,
@@ -276,17 +287,9 @@ impl AurokuApp {
                         &[("n", &devices.len().to_string())],
                     ));
                     self.devices = devices;
-                    let vid = parse_hex_u16(&self.vid_text).ok();
-                    let pid = parse_hex_u16(&self.pid_text).ok();
-                    let matched = self
-                        .devices
-                        .iter()
-                        .position(|device| Some(device.vid) == vid && Some(device.pid) == pid);
-                    if let Some(index) = matched {
-                        self.apply_device(index, false);
-                    } else {
-                        self.selected_device = None;
-                    }
+                    self.selected_device = None;
+                    self.permission_pending = false;
+                    self.authorized_device = None;
                 }
                 Event::ScanFailed(message) => {
                     self.scanning = false;
@@ -296,6 +299,57 @@ impl AurokuApp {
                         i18n::tf("扫描失败：{message}", &[("message", &message)]),
                         Tone::Error,
                     );
+                }
+                Event::AccessStarted(device) => {
+                    if self.selected_device_key() == Some(device_key(&device)) {
+                        self.permission_pending = true;
+                        self.log(i18n::tf(
+                            "正在请求 {name} 的 USB 读写权限",
+                            &[("name", &device.display_name())],
+                        ));
+                    }
+                }
+                Event::AccessGranted { device, acl_state } => {
+                    let key = device_key(&device);
+                    if !self
+                        .granted_devices
+                        .iter()
+                        .any(|grant| device_key(&grant.device) == key)
+                    {
+                        self.granted_devices.push(GrantedDevice {
+                            device: device.clone(),
+                            acl_state,
+                        });
+                    }
+                    if self.selected_device_key() == Some(device_key(&device)) {
+                        self.permission_pending = false;
+                        self.authorized_device = Some(device_key(&device));
+                        self.log(i18n::tf(
+                            "已获得 {name} 的 USB 读写权限",
+                            &[("name", &device.display_name())],
+                        ));
+                        self.notify(
+                            i18n::tf(
+                                "已授予 {name} 的 USB 读写权限",
+                                &[("name", &device.display_name())],
+                            ),
+                            Tone::Primary,
+                        );
+                    }
+                }
+                Event::AccessFailed { device, message } => {
+                    if self.selected_device_key() == Some(device_key(&device)) {
+                        self.permission_pending = false;
+                        self.authorized_device = None;
+                        self.log(i18n::tf(
+                            "{name} USB 权限请求失败：{message}",
+                            &[("name", &device.display_name()), ("message", &message)],
+                        ));
+                        self.notify(
+                            i18n::tf("USB 权限请求失败：{message}", &[("message", &message)]),
+                            Tone::Error,
+                        );
+                    }
                 }
                 Event::Started { label } => {
                     self.busy = true;
@@ -395,10 +449,19 @@ impl AurokuApp {
     }
 
     fn apply_device(&mut self, index: usize, announce: bool) {
+        if self.permission_pending {
+            return;
+        }
         let Some(device) = self.devices.get(index).cloned() else {
             return;
         };
+        let key = device_key(&device);
+        if self.selected_device_key() == Some(key) && self.authorized_device == Some(key) {
+            return;
+        }
         self.selected_device = Some(index);
+        self.permission_pending = cfg!(target_os = "linux");
+        self.authorized_device = None;
         self.vid_text = format!("{:04x}", device.vid);
         self.pid_text = format!("{:04x}", device.pid);
         if let Some(serial) = &device.serial {
@@ -416,6 +479,7 @@ impl AurokuApp {
                 Tone::Primary,
             );
         }
+        self.worker.send(Request::GrantAccess(device));
     }
 
     fn build_config(&self) -> Result<DeviceConfig, String> {
@@ -436,6 +500,10 @@ impl AurokuApp {
         };
 
         let mut config = DeviceConfig::new(vid, pid);
+        config.usb_location = self
+            .selected_device
+            .and_then(|index| self.devices.get(index))
+            .map(|device| (device.bus, device.address));
         config.sn = {
             let sn = self.sn_text.trim();
             if sn.is_empty() {
@@ -456,6 +524,20 @@ impl AurokuApp {
     fn start(&mut self, task: Task, label: &str) {
         if self.busy {
             return;
+        }
+        if cfg!(target_os = "linux") {
+            let Some(selected) = self.selected_device_key() else {
+                self.notify(i18n::t("请先搜索并选择 USB 设备"), Tone::Warning);
+                return;
+            };
+            if self.permission_pending {
+                self.notify(i18n::t("正在请求所选设备的 USB 权限"), Tone::Warning);
+                return;
+            }
+            if self.authorized_device != Some(selected) {
+                self.notify(i18n::t("请先为所选设备授予 USB 权限"), Tone::Warning);
+                return;
+            }
         }
         let config = match self.build_config() {
             Ok(config) => config,
@@ -528,7 +610,7 @@ impl AurokuApp {
     }
 
     fn scan(&mut self, filtered: bool) {
-        if self.busy {
+        if self.busy || self.permission_pending {
             return;
         }
         let (vid, pid) = if filtered {
@@ -543,7 +625,16 @@ impl AurokuApp {
             (None, None)
         };
         self.scanning = true;
+        self.selected_device = None;
+        self.permission_pending = false;
+        self.authorized_device = None;
         self.worker.send(Request::Scan { vid, pid });
+    }
+
+    fn selected_device_key(&self) -> Option<(u16, u16, u8, u8)> {
+        self.selected_device
+            .and_then(|index| self.devices.get(index))
+            .map(device_key)
     }
 
     // --------------------------------------------------------------------------
@@ -682,11 +773,7 @@ impl AurokuApp {
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let permission = if cfg!(target_os = "linux") {
-                    if crate::elevate::is_effective_root() {
-                        i18n::t("权限：root")
-                    } else {
-                        i18n::t("权限：普通用户 · USB 访问可能受限")
-                    }
+                    i18n::t("Linux USB 权限由 polkit 按设备授权")
                 } else {
                     i18n::t("USB 访问可能需要管理员权限")
                 };
@@ -769,13 +856,13 @@ impl AurokuApp {
             "连接 au / SERI 设备，读取锁状态、PIN 与 SIM 信息",
         );
 
-        if cfg!(target_os = "linux") && !crate::elevate::is_effective_root() {
+        if cfg!(target_os = "linux") && self.scan_error.is_some() {
             banner(
                 ui,
                 &s,
                 Icon::Warning,
-                "当前以普通用户运行，USB 访问可能失败。可使用 pkexec 重新启动并完成 polkit 认证，或配置 udev 规则。",
-                Tone::Warning,
+                "GUI 不会以 root 运行。选择设备后会仅为该 USB 设备请求读写权限。",
+                Tone::Neutral,
             );
             ui.add_space(12.0);
         }
@@ -784,7 +871,15 @@ impl AurokuApp {
         let current_device = self
             .selected_device
             .and_then(|index| devices.get(index))
-            .map(|device| format!("{} · {}", device.display_name(), device.id_string()))
+            .map(|device| {
+                format!(
+                    "{} · {} · {:03}:{:03}",
+                    device.display_name(),
+                    device.id_string(),
+                    device.bus,
+                    device.address
+                )
+            })
             .unwrap_or_else(|| i18n::t("选择已扫描设备…").to_owned());
 
         card(ui, &s, |ui| {
@@ -817,8 +912,13 @@ impl AurokuApp {
                             ui.label(i18n::t("未发现设备（请检查 USB 权限后重新扫描）"));
                         }
                         for (index, device) in devices.iter().enumerate() {
-                            let text =
-                                format!("{}  ·  {}", device.display_name(), device.id_string());
+                            let text = format!(
+                                "{}  ·  {}  ·  {:03}:{:03}",
+                                device.display_name(),
+                                device.id_string(),
+                                device.bus,
+                                device.address
+                            );
                             if ui
                                 .selectable_label(self.selected_device == Some(index), text)
                                 .clicked()
@@ -830,6 +930,16 @@ impl AurokuApp {
             });
             if let Some(index) = picked {
                 self.apply_device(index, true);
+            }
+            if self.permission_pending {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(i18n::t("正在请求所选设备的 USB 读写权限…"));
+                });
+            } else if self.selected_device_key().is_some()
+                && self.authorized_device == self.selected_device_key()
+            {
+                subtle_label(ui, &s, "已授权当前选择的 USB 设备");
             }
 
             if let Some(error) = &self.scan_error {
@@ -2431,17 +2541,9 @@ impl AurokuApp {
                 ui.add_space(10.0);
                 ui.label(
                     RichText::new(i18n::t(
-                        "跨平台：Linux（Wayland / X11）、Windows 与 macOS。USB 访问在 Linux 上通常需要 udev 规则或 root 权限。",
+                        "跨平台：Linux（Wayland / X11）、Windows 与 macOS。Linux GUI 始终以普通用户运行；选择设备后才会为该设备请求 USB 权限。",
                     ))
                     .size(12.5)
-                    .color(s.on_surface_variant),
-                );
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(i18n::t(
-                        "Linux 启动时会通过 pkexec（polkit）请求 root 权限；使用 --no-polkit 或 AUROKU_GUI_NO_POLKIT=1 可跳过。认证取消或 polkit 不可用时会以普通用户继续运行。",
-                    ))
-                    .size(12.0)
                     .color(s.on_surface_variant),
                 );
                 ui.add_space(18.0);
@@ -2534,6 +2636,14 @@ impl eframe::App for AurokuApp {
         self.confirm_modal(ctx);
         self.about_modal(ctx);
         self.overlay_tick(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.worker.shutdown_and_wait();
+        self.poll_events();
+        if let Err(error) = permissions::revoke_granted_devices(&self.granted_devices) {
+            eprintln!("[auroku-gui] Failed to revoke USB ACLs on exit: {error}");
+        }
     }
 }
 

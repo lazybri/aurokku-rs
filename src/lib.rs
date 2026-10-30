@@ -346,6 +346,8 @@ pub type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct DeviceConfig {
     pub vid: u16,
     pub pid: u16,
+    /// Optional USB bus/address selected by a front-end.
+    pub usb_location: Option<(u8, u8)>,
     pub sn: Option<String>,
     pub interface: Option<u8>,
     pub ep_out: u8,
@@ -363,6 +365,7 @@ impl DeviceConfig {
         Self {
             vid,
             pid,
+            usb_location: None,
             sn: None,
             interface: None,
             ep_out: DEFAULT_EP_OUT,
@@ -480,6 +483,7 @@ impl BatchProfile {
 pub struct AuRokkuDevice {
     vid: u16,
     pid: u16,
+    usb_location: Option<(u8, u8)>,
     sn: Option<String>,
     interface_num: Option<u8>,
     interface_alt: u8,
@@ -518,6 +522,7 @@ impl AuRokkuDevice {
         Self {
             vid,
             pid,
+            usb_location: None,
             sn,
             interface_num: interface,
             interface_alt: 0,
@@ -543,6 +548,10 @@ impl AuRokkuDevice {
     /// Route diagnostic lines to an extra consumer (e.g. the GUI console).
     pub fn set_log_sink(&mut self, sink: LogSink) {
         self.log_sink = Some(sink);
+    }
+
+    fn set_usb_location(&mut self, location: Option<(u8, u8)>) {
+        self.usb_location = location;
     }
 
     fn material(&self) -> AuRokkuResult<&[u8]> {
@@ -734,7 +743,12 @@ impl AuRokkuDevice {
                         Ok(descriptor) => descriptor,
                         Err(_) => continue,
                     };
-                    if descriptor.vendor_id() == self.vid && descriptor.product_id() == self.pid {
+                    if descriptor.vendor_id() == self.vid
+                        && descriptor.product_id() == self.pid
+                        && self.usb_location.is_none_or(|(bus, address)| {
+                            candidate.bus_number() == bus && candidate.address() == address
+                        })
+                    {
                         found = Some(candidate);
                         break;
                     }
@@ -1918,6 +1932,7 @@ pub fn run_task(config: &DeviceConfig, task: &Task) -> AuRokkuResult<Value> {
         config.verbose,
         config.type2,
     );
+    device.set_usb_location(config.usb_location);
     if let Some(sink) = &config.log_sink {
         device.set_log_sink(sink.clone());
     }
@@ -2455,6 +2470,7 @@ pub fn cli_main() {
     let config = DeviceConfig {
         vid: cli.vid,
         pid: cli.pid,
+        usb_location: None,
         sn: cli.sn.clone(),
         interface: cli.interface,
         ep_out: cli.ep_out,

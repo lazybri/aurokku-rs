@@ -6,11 +6,13 @@
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use auroku::{run_task, scan_devices, AuRokkuError, DeviceConfig, DeviceSummary, LogSink, Task};
 use eframe::egui;
+
+use crate::permissions::grant_selected_device;
 
 /// Serializable form of `AuRokkuError` for the UI thread.
 #[derive(Clone, Debug)]
@@ -33,6 +35,7 @@ pub enum Request {
         vid: Option<u16>,
         pid: Option<u16>,
     },
+    GrantAccess(DeviceSummary),
     Run {
         config: DeviceConfig,
         task: Task,
@@ -45,6 +48,15 @@ pub enum Event {
     ScanStarted,
     Scanned(Vec<DeviceSummary>),
     ScanFailed(String),
+    AccessStarted(DeviceSummary),
+    AccessGranted {
+        device: DeviceSummary,
+        acl_state: String,
+    },
+    AccessFailed {
+        device: DeviceSummary,
+        message: String,
+    },
     Started {
         label: String,
     },
@@ -61,6 +73,7 @@ pub struct Worker {
     events: Receiver<Event>,
     event_tx: Sender<Event>,
     ctx: egui::Context,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl Worker {
@@ -71,7 +84,7 @@ impl Worker {
         let thread_events = event_tx.clone();
         let thread_ctx = ctx.clone();
 
-        thread::Builder::new()
+        let worker_thread = thread::Builder::new()
             .name("auroku-usb".to_owned())
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
@@ -89,6 +102,15 @@ impl Worker {
                                         thread_events.send(Event::ScanFailed(error.to_string()));
                                 }
                             }
+                        }
+                        Request::GrantAccess(device) => {
+                            let _ = thread_events.send(Event::AccessStarted(device.clone()));
+                            thread_ctx.request_repaint();
+                            let event = match grant_selected_device(&device) {
+                                Ok(acl_state) => Event::AccessGranted { device, acl_state },
+                                Err(message) => Event::AccessFailed { device, message },
+                            };
+                            let _ = thread_events.send(event);
                         }
                         Request::Run {
                             config,
@@ -127,6 +149,7 @@ impl Worker {
             events: event_rx,
             event_tx,
             ctx,
+            thread: Some(worker_thread),
         }
     }
 
@@ -152,11 +175,20 @@ impl Worker {
     pub fn keep_alive(&self) {
         self.ctx.request_repaint_after(Duration::from_millis(120));
     }
+
+    pub fn shutdown_and_wait(&mut self) {
+        let _ = self.requests.send(Request::Shutdown);
+        if let Some(worker_thread) = self.thread.take() {
+            if worker_thread.join().is_err() {
+                eprintln!("[auroku-gui] USB worker thread panicked during shutdown");
+            }
+        }
+    }
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        let _ = self.requests.send(Request::Shutdown);
+        self.shutdown_and_wait();
     }
 }
 

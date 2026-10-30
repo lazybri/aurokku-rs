@@ -84,11 +84,25 @@ pub fn t(text: &str) -> &str {
         "就绪" => "Ready",
         "失败" => "Failed",
         "待命" => "Idle",
-        "权限：root" => "Privilege: root",
-        "权限：普通用户 · USB 访问可能受限" => {
-            "Privilege: user · USB access may be limited"
-        }
+        "Linux USB 权限由 polkit 按设备授权" => "Linux USB access is authorized per device through polkit",
         "USB 访问可能需要管理员权限" => "USB access may require administrator privileges",
+        "GUI 必须以普通用户运行；请选择设备后再授权 USB 访问。" => {
+            "The GUI must run as an unprivileged user; authorize USB access after selecting a device."
+        }
+        "正在请求所选设备的 USB 读写权限…" => "Requesting USB read/write access for the selected device…",
+        "已授权当前选择的 USB 设备" => "USB access granted for the selected device",
+        "正在请求 {name} 的 USB 读写权限" => {
+            "Requesting USB read/write access for {name}"
+        }
+        "已获得 {name} 的 USB 读写权限" => "USB read/write access granted for {name}",
+        "已授予 {name} 的 USB 读写权限" => "USB read/write access granted for {name}",
+        "{name} USB 权限请求失败：{message}" => {
+            "USB permission request failed for {name}: {message}"
+        }
+        "USB 权限请求失败：{message}" => "USB permission request failed: {message}",
+        "请先搜索并选择 USB 设备" => "Scan for and select a USB device first",
+        "正在请求所选设备的 USB 权限" => "Requesting USB access for the selected device",
+        "请先为所选设备授予 USB 权限" => "Grant USB access for the selected device first",
         "auRokku v{version} · 基于Yuu所提供的代码二次开发 ©lazybri" => {
             "auRokku v{version} · Based on code by Yuu, further developed ©lazybri"
         }
@@ -106,8 +120,8 @@ pub fn t(text: &str) -> &str {
         "连接 au / SERI 设备，读取锁状态、PIN 与 SIM 信息" => {
             "Connect to an au / SERI device and read lock state, PIN and SIM information"
         }
-        "当前以普通用户运行，USB 访问可能失败。可使用 pkexec 重新启动并完成 polkit 认证，或配置 udev 规则。" => {
-            "Running as a normal user; USB access may fail. Restart via pkexec and complete polkit authentication, or configure a udev rule."
+        "GUI 不会以 root 运行。选择设备后会仅为该 USB 设备请求读写权限。" => {
+            "The GUI does not run as root. After device selection, it requests read/write access for that USB device only."
         }
         "选择已扫描设备…" => "Select a scanned device…",
         "设备连接" => "Device connection",
@@ -392,11 +406,8 @@ pub fn t(text: &str) -> &str {
         "基于 egui + eframe 的 Material 3 前端。协议、Type2Auth 算法与 JSON 结构均复用 Rust 后端，行为与 auRokku.py 保持一致。" => {
             "A Material 3 front-end built with egui + eframe. The protocol, Type2Auth algorithm and JSON structure reuse the Rust backend and match auRokku.py."
         }
-        "跨平台：Linux（Wayland / X11）、Windows 与 macOS。USB 访问在 Linux 上通常需要 udev 规则或 root 权限。" => {
-            "Cross-platform: Linux (Wayland / X11), Windows and macOS. USB access on Linux usually requires a udev rule or root privileges."
-        }
-        "Linux 启动时会通过 pkexec（polkit）请求 root 权限；使用 --no-polkit 或 AUROKU_GUI_NO_POLKIT=1 可跳过。认证取消或 polkit 不可用时会以普通用户继续运行。" => {
-            "On Linux, the app requests root via pkexec (polkit) at startup; use --no-polkit or AUROKU_GUI_NO_POLKIT=1 to skip. If authentication is cancelled or polkit is unavailable, it continues as a normal user."
+        "跨平台：Linux（Wayland / X11）、Windows 与 macOS。Linux GUI 始终以普通用户运行；选择设备后才会为该设备请求 USB 权限。" => {
+            "Cross-platform: Linux (Wayland / X11), Windows and macOS. The Linux GUI runs unprivileged and requests USB access only after a device is selected."
         }
 
         // ------------------------------------------------------------------
@@ -425,26 +436,6 @@ pub fn t(text: &str) -> &str {
         "VID / PID 格式无效" => "Invalid VID / PID format",
         "无效的十六进制值：{text}" => "Invalid hex value: {text}",
         "无效的十六进制字节：{text}" => "Invalid hex byte: {text}",
-        "无法定位可执行文件：{error}；将以普通用户运行" => {
-            "Unable to locate the executable: {error}; continuing as a normal user"
-        }
-        "可执行文件路径无效；将以普通用户运行" => {
-            "The executable path is invalid; continuing as a normal user"
-        }
-        "可执行文件对任意用户可写，拒绝提权；请修复文件权限后重试" => {
-            "The executable is world-writable; refusing elevation. Fix the file permissions and retry."
-        }
-        "未找到 pkexec（polkit），将以普通用户运行" => {
-            "pkexec (polkit) not found; continuing as a normal user"
-        }
-        "正在通过 polkit 请求 root 权限…" => "Requesting root via polkit…",
-        "polkit 认证未完成，将以普通用户继续运行（USB 访问可能受限）" => {
-            "Polkit authentication did not complete; continuing as a normal user (USB access may be limited)"
-        }
-        "无法启动 pkexec：{error}；将以普通用户运行" => {
-            "Unable to start pkexec: {error}; continuing as a normal user"
-        }
-
         _ => text,
     }
 }

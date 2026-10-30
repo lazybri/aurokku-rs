@@ -30,7 +30,7 @@ rusb = { version = "0.9", features = ["vendored"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Safe effective-UID check for the polkit/pkexec start-up elevation path.
+# Safe effective-UID check to prevent the Linux GUI from running as root.
 rustix = { version = "1", features = ["process"] }
 
 [profile.release]

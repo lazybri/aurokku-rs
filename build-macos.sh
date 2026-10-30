@@ -93,10 +93,8 @@ if [[ "$MODE" == "native" ]]; then
         fi
     fi
 
-    echo "==> cargo build --release --locked --target $TARGET --bin auroku"
-    cargo build --release --locked --target "$TARGET" --bin auroku
-    echo "==> cargo build --release --locked --target $TARGET --features gui --bin auroku-gui"
-    cargo build --release --locked --target "$TARGET" --features gui --bin auroku-gui
+    echo "==> cargo build --release --locked --target $TARGET --features gui --bins"
+    cargo build --release --locked --target "$TARGET" --features gui --bins
     cp "target/$TARGET/release/auroku" "$OUT"
     cp "target/$TARGET/release/auroku-gui" "$GUI_OUT"
 else
@@ -106,10 +104,8 @@ else
     fi
 
     for target in "${TARGETS[@]}"; do
-        echo "==> cargo build --release --locked --target $target --bin auroku"
-        cargo build --release --locked --target "$target" --bin auroku
-        echo "==> cargo build --release --locked --target $target --features gui --bin auroku-gui"
-        cargo build --release --locked --target "$target" --features gui --bin auroku-gui
+        echo "==> cargo build --release --locked --target $target --features gui --bins"
+        cargo build --release --locked --target "$target" --features gui --bins
     done
 
     # Combine both slices. Each slice is already stripped by [profile.release].
@@ -141,4 +137,3 @@ file "$OUT"
 file "$GUI_OUT"
 echo "Output: $OUT"
 echo "Output: $GUI_OUT"
-
