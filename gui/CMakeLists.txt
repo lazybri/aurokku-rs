@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(auroku-qt VERSION 0.1.0 LANGUAGES CXX)
+project(auroku-qt VERSION 0.2.0 LANGUAGES CXX)
+
+# CMake versions are numeric only, so the prerelease suffix is appended to the
+# user-visible version string separately.
+set(AUROKU_VERSION_SUFFIX "-qt6")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -135,7 +139,8 @@ else()
     target_link_libraries(auroku-qt PRIVATE m rt util)
 endif()
 target_include_directories(auroku-qt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_definitions(auroku-qt PRIVATE AUROKU_APP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(auroku-qt PRIVATE
+    AUROKU_APP_VERSION="${PROJECT_VERSION}${AUROKU_VERSION_SUFFIX}")
 
 if(MSVC)
     # /utf-8 is required: all sources are UTF-8 and contain Chinese literals.

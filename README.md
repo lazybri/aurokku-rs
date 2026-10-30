@@ -241,7 +241,7 @@ The workflow in `.github/workflows/build.yml` runs **tests → three-platform bu
 
 - **Pull request**: `cargo fmt --check`, `cargo clippy -D warnings` and
   `cargo test`.
-- **Manual dispatch**: enter a version (e.g. `v0.1.0`; a missing `v` is added
+- **Manual dispatch**: enter a version (e.g. `v0.2.0-qt6`; a missing `v` is added
   automatically), optionally prerelease / draft. The workflow runs tests, builds
   Windows, Linux (static musl) and the macOS universal binary in parallel, then
   creates a GitHub Release and uploads all artifacts.

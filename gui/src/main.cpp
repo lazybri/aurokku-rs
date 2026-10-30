@@ -15,7 +15,7 @@
 #include "ui/Theme.h"
 
 #ifndef AUROKU_APP_VERSION
-#define AUROKU_APP_VERSION "0.1.0"
+#define AUROKU_APP_VERSION "0.2.0-qt6"
 #endif
 
 int main(int argc, char **argv)
