@@ -1852,10 +1852,59 @@ impl DeviceSummary {
     }
 }
 
+/// Linux sysfs root that exposes the USB device tree.
+#[cfg(target_os = "linux")]
+const SYSFS_USB_DEVICES: &str = "/sys/bus/usb/devices";
+
+/// Recover descriptor strings from sysfs.
+///
+/// libusb only reads string descriptors after opening the device, which fails
+/// for unprivileged users. sysfs exposes the same strings world-readable, so
+/// the device list stays informative before a USB ACL has been granted.
+#[cfg(target_os = "linux")]
+fn fill_strings_from_sysfs(root: &std::path::Path, summary: &mut DeviceSummary) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let number = |name: &str| -> Option<u16> {
+            std::fs::read_to_string(dir.join(name))
+                .ok()?
+                .trim()
+                .parse()
+                .ok()
+        };
+        if number("busnum") != Some(u16::from(summary.bus))
+            || number("devnum") != Some(u16::from(summary.address))
+        {
+            continue;
+        }
+
+        let text = |name: &str| -> Option<String> {
+            std::fs::read_to_string(dir.join(name))
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        if summary.manufacturer.is_none() {
+            summary.manufacturer = text("manufacturer");
+        }
+        if summary.product.is_none() {
+            summary.product = text("product");
+        }
+        if summary.serial.is_none() {
+            summary.serial = text("serial");
+        }
+        return;
+    }
+}
+
 /// Enumerate USB devices, optionally filtered by VID/PID.
 ///
 /// String descriptors are only read when the platform allows it; a permission
-/// failure still yields a usable bus/address/ID entry.
+/// failure still yields a usable bus/address/ID entry. On Linux the missing
+/// strings are recovered from sysfs, which unprivileged users can read.
 pub fn scan_devices(
     filter_vid: Option<u16>,
     filter_pid: Option<u16>,
@@ -1909,6 +1958,9 @@ pub fn scan_devices(
                     .filter(|text| !text.trim().is_empty());
             }
         }
+
+        #[cfg(target_os = "linux")]
+        fill_strings_from_sysfs(std::path::Path::new(SYSFS_USB_DEVICES), &mut summary);
 
         out.push(summary);
     }
@@ -2644,6 +2696,44 @@ mod tests {
     fn hex_spaced_format() {
         assert_eq!(hex_spaced(&[0x74, 0x01, 0xFF]), "74 01 ff");
         assert_eq!(hex_spaced(&[]), "");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sysfs_strings_fill_missing_descriptors() {
+        let root = std::env::temp_dir().join(format!("auroku-sysfs-{}", std::process::id()));
+        let device = root.join("1-2");
+        std::fs::create_dir_all(&device).unwrap();
+        std::fs::write(device.join("busnum"), "1\n").unwrap();
+        std::fs::write(device.join("devnum"), "2\n").unwrap();
+        std::fs::write(device.join("product"), "auRokku SERI\n").unwrap();
+        std::fs::write(device.join("manufacturer"), "auRokku\n").unwrap();
+        std::fs::write(device.join("serial"), "SKYKA077394\n").unwrap();
+
+        let mut summary = DeviceSummary {
+            vid: 0x0482,
+            pid: 0x0A5C,
+            bus: 1,
+            address: 2,
+            manufacturer: None,
+            product: None,
+            serial: None,
+        };
+        fill_strings_from_sysfs(&root, &mut summary);
+        assert_eq!(summary.display_name(), "auRokku SERI");
+        assert_eq!(summary.manufacturer.as_deref(), Some("auRokku"));
+        assert_eq!(summary.serial.as_deref(), Some("SKYKA077394"));
+
+        summary.product = Some("kept".to_owned());
+        fill_strings_from_sysfs(&root, &mut summary);
+        assert_eq!(summary.product.as_deref(), Some("kept"));
+
+        summary.bus = 9;
+        summary.product = None;
+        fill_strings_from_sysfs(&root, &mut summary);
+        assert_eq!(summary.product, None);
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

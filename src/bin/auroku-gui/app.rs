@@ -98,6 +98,17 @@ fn device_key(device: &DeviceSummary) -> (u16, u16, u8, u8) {
     (device.vid, device.pid, device.bus, device.address)
 }
 
+/// One-line label for the device picker: human name, IDs and bus location.
+fn device_label(device: &DeviceSummary) -> String {
+    format!(
+        "{} · {} · {:03}:{:03}",
+        device.display_name(),
+        device.id_string(),
+        device.bus,
+        device.address
+    )
+}
+
 impl Confirm {
     fn title(&self) -> &'static str {
         match self {
@@ -871,15 +882,7 @@ impl AurokuApp {
         let current_device = self
             .selected_device
             .and_then(|index| devices.get(index))
-            .map(|device| {
-                format!(
-                    "{} · {} · {:03}:{:03}",
-                    device.display_name(),
-                    device.id_string(),
-                    device.bus,
-                    device.address
-                )
-            })
+            .map(device_label)
             .unwrap_or_else(|| i18n::t("选择已扫描设备…").to_owned());
 
         card(ui, &s, |ui| {
@@ -912,13 +915,7 @@ impl AurokuApp {
                             ui.label(i18n::t("未发现设备（请检查 USB 权限后重新扫描）"));
                         }
                         for (index, device) in devices.iter().enumerate() {
-                            let text = format!(
-                                "{}  ·  {}  ·  {:03}:{:03}",
-                                device.display_name(),
-                                device.id_string(),
-                                device.bus,
-                                device.address
-                            );
+                            let text = device_label(device);
                             if ui
                                 .selectable_label(self.selected_device == Some(index), text)
                                 .clicked()
@@ -2690,4 +2687,34 @@ fn parse_hex_u8(text: &str) -> Result<u8, String> {
         .unwrap_or(trimmed);
     u8::from_str_radix(digits, 16)
         .map_err(|_| i18n::tf("无效的十六进制字节：{text}", &[("text", text)]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_label;
+    use auroku::DeviceSummary;
+
+    fn summary(product: Option<&str>, manufacturer: Option<&str>) -> DeviceSummary {
+        DeviceSummary {
+            vid: 0x0482,
+            pid: 0x0A5C,
+            bus: 1,
+            address: 2,
+            manufacturer: manufacturer.map(str::to_owned),
+            product: product.map(str::to_owned),
+            serial: None,
+        }
+    }
+
+    #[test]
+    fn device_label_prefers_product_then_manufacturer() {
+        let label = device_label(&summary(Some("auRokku SERI"), Some("auRokku")));
+        assert_eq!(label, "auRokku SERI · 0482:0a5c · 001:002");
+
+        let label = device_label(&summary(None, Some("auRokku")));
+        assert_eq!(label, "auRokku · 0482:0a5c · 001:002");
+
+        let label = device_label(&summary(None, None));
+        assert_eq!(label, "USB 设备 0482:0a5c · 0482:0a5c · 001:002");
+    }
 }
