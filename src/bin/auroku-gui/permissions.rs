@@ -177,10 +177,7 @@ pub fn run_privileged_helper() -> Option<i32> {
             }
             "--revoke-usb-access" => {
                 let mut devices = Vec::new();
-                loop {
-                    let Some(vid) = args.next() else {
-                        break;
-                    };
+                while let Some(vid) = args.next() {
                     let device = DeviceAddress {
                         vid: parse_arg(Some(vid), "VID")?,
                         pid: parse_arg(args.next(), "PID")?,
@@ -430,7 +427,7 @@ fn validate_acl_permissions(permissions: &str) -> Result<String, String> {
     if permissions.len() == 3
         && permissions
             .bytes()
-            .zip([b'r', b'w', b'x'])
+            .zip(*b"rwx")
             .all(|(value, expected)| value == expected || value == b'-')
     {
         Ok(permissions.to_owned())
