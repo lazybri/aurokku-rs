@@ -19,18 +19,20 @@ struct AclEntries {
 };
 
 bool run(const QString &program, const QStringList &arguments, QByteArray *output,
-         QString *error)
+         QString *error, int finishTimeoutMs = 5000)
 {
     QProcess process;
     process.start(program, arguments);
-    if (!process.waitForStarted(3000)) {
+    if (!process.waitForStarted(10000)) {
         *error = process.errorString();
         return false;
     }
-    if (!process.waitForFinished(3000)) {
+    if (!process.waitForFinished(finishTimeoutMs)) {
         process.kill();
         process.waitForFinished();
-        *error = QStringLiteral("command timed out: %1").arg(program);
+        *error = QStringLiteral("command timed out after %1 seconds: %2")
+                     .arg(finishTimeoutMs / 1000)
+                     .arg(program);
         return false;
     }
     if (output != nullptr)
@@ -93,7 +95,7 @@ bool changeAcl(const QString &pkexec, const QString &setfacl, const QStringList 
     }
     QStringList elevatedArguments{setfacl};
     elevatedArguments.append(arguments);
-    return run(pkexec, elevatedArguments, nullptr, error);
+    return run(pkexec, elevatedArguments, nullptr, error, 120000);
 }
 
 } // namespace

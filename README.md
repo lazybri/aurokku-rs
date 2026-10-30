@@ -63,7 +63,10 @@ Platform notes:
 
 - **Linux**: requires the Qt 6 runtime (`qt6-base`) and the `acl` package
   (`getfacl` / `setfacl`); for native Wayland also
-  install `qt6-wayland` (otherwise Qt uses XWayland). USB access usually needs
+  install `qt6-wayland` (otherwise Qt uses XWayland; set
+  `QT_QPA_PLATFORM=xcb` to select XWayland explicitly). If USB string descriptors
+  are inaccessible to the current user, manufacturer, product and serial names
+  are read from `/sys/bus/usb/devices`. USB access usually needs
   the app's temporary per-device ACL or a matching udev rule. The GUI is a
   normal dynamic Qt application; the Rust backend is linked into the executable
   and cannot be fully static.
@@ -86,6 +89,7 @@ ACL is restored when selecting another device, rescanning, or closing the app.
 The `acl` package (`getfacl` and `setfacl`) and a working polkit agent must be
 installed. A forced process termination or system crash can prevent cleanup and
 leave a temporary ACL that an administrator may need to remove manually.
+Authorization may wait for up to two minutes for the desktop polkit prompt.
 If the device ACL mask prevents read/write access, the app leaves the ACL
 unchanged rather than widening access for other users. A persistent udev rule
 can be used instead when preferred.

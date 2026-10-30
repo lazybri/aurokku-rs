@@ -1835,23 +1835,71 @@ impl DeviceSummary {
 
     /// Human-friendly product name, falling back to the manufacturer/IDs.
     pub fn display_name(&self) -> String {
-        self.product
+        let manufacturer = self
+            .manufacturer
             .as_deref()
-            .filter(|text| !text.trim().is_empty())
-            .or_else(|| {
-                self.manufacturer
-                    .as_deref()
-                    .filter(|text| !text.trim().is_empty())
-            })
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("USB 设备 {}", self.id_string()))
+            .filter(|text| !text.trim().is_empty());
+        let product = self
+            .product
+            .as_deref()
+            .filter(|text| !text.trim().is_empty());
+
+        match (manufacturer, product) {
+            (Some(manufacturer), Some(product)) if !manufacturer.eq_ignore_ascii_case(product) => {
+                format!("{manufacturer} — {product}")
+            }
+            (_, Some(product)) => product.to_owned(),
+            (Some(manufacturer), None) => manufacturer.to_owned(),
+            (None, None) => format!("USB 设备 {}", self.id_string()),
+        }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn read_sysfs_usb_descriptors(
+    root: &std::path::Path,
+    bus: u8,
+    address: u8,
+) -> Option<(Option<String>, Option<String>, Option<String>)> {
+    use std::fs;
+
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let matches_location =
+            ["busnum", "devnum"]
+                .into_iter()
+                .zip([bus, address])
+                .all(|(name, expected)| {
+                    fs::read_to_string(path.join(name))
+                        .ok()
+                        .and_then(|value| value.trim().parse::<u8>().ok())
+                        == Some(expected)
+                });
+        if !matches_location {
+            continue;
+        }
+
+        let read_descriptor = |name: &str| {
+            fs::read_to_string(path.join(name))
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        return Some((
+            read_descriptor("manufacturer"),
+            read_descriptor("product"),
+            read_descriptor("serial"),
+        ));
+    }
+    None
 }
 
 /// Enumerate USB devices, optionally filtered by VID/PID.
 ///
 /// String descriptors are only read when the platform allows it; a permission
-/// failure still yields a usable bus/address/ID entry.
+/// failure still yields a usable bus/address/ID entry. Linux sysfs provides a
+/// readable fallback for names when the current user cannot open the device.
 pub fn scan_devices(
     filter_vid: Option<u16>,
     filter_pid: Option<u16>,
@@ -1903,6 +1951,19 @@ pub fn scan_devices(
                     .read_serial_number_string_ascii(&descriptor)
                     .ok()
                     .filter(|text| !text.trim().is_empty());
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        if summary.manufacturer.is_none() || summary.product.is_none() || summary.serial.is_none() {
+            if let Some((manufacturer, product, serial)) = read_sysfs_usb_descriptors(
+                std::path::Path::new("/sys/bus/usb/devices"),
+                summary.bus,
+                summary.address,
+            ) {
+                summary.manufacturer = summary.manufacturer.or(manufacturer);
+                summary.product = summary.product.or(product);
+                summary.serial = summary.serial.or(serial);
             }
         }
 
@@ -2681,5 +2742,51 @@ mod tests {
         assert!(config.sn.is_none());
         assert!(!config.verbose);
         assert!(!config.type2);
+    }
+
+    #[test]
+    fn device_display_name_includes_manufacturer_and_product() {
+        let device = DeviceSummary {
+            vid: 0x1234,
+            pid: 0x5678,
+            bus: 1,
+            address: 2,
+            manufacturer: Some("Acme".to_string()),
+            product: Some("USB Reader".to_string()),
+            serial: None,
+        };
+        assert_eq!(device.display_name(), "Acme — USB Reader");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sysfs_descriptors_match_bus_and_address() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("auroku-sysfs-test-{}-{unique}", std::process::id()));
+        let device = root.join("1-2");
+        fs::create_dir_all(&device).unwrap();
+        fs::write(device.join("busnum"), "1\n").unwrap();
+        fs::write(device.join("devnum"), "2\n").unwrap();
+        fs::write(device.join("manufacturer"), " Acme \n").unwrap();
+        fs::write(device.join("product"), "USB Reader\n").unwrap();
+
+        assert_eq!(
+            read_sysfs_usb_descriptors(&root, 1, 2),
+            Some((
+                Some("Acme".to_string()),
+                Some("USB Reader".to_string()),
+                None
+            ))
+        );
+        assert_eq!(read_sysfs_usb_descriptors(&root, 1, 3), None);
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QFile>
+#include <QStandardPaths>
 #include <QStyleFactory>
 #include <QTimer>
 #include <cstring>
@@ -44,7 +45,10 @@ int main(int argc, char **argv)
     QApplication::setApplicationDisplayName(QStringLiteral("auRokku"));
     QApplication::setOrganizationName(QStringLiteral("auroku"));
     QApplication::setApplicationVersion(QStringLiteral(AUROKU_APP_VERSION));
-    QApplication::setDesktopFileName(QStringLiteral("auroku"));
+    if (!QStandardPaths::locate(QStandardPaths::ApplicationsLocation,
+                                 QStringLiteral("auroku.desktop")).isEmpty()) {
+        QApplication::setDesktopFileName(QStringLiteral("auroku"));
+    }
 
     // Fusion behaves predictably with style sheets on every platform.
     if (QStyle *style = QStyleFactory::create(QStringLiteral("Fusion")))

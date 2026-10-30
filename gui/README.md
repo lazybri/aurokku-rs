@@ -97,12 +97,15 @@ Task kinds: `status`, `readuimlk`, `clearlk`, `writelk` (`value`, `control`),
 
 With `QT_QPA_PLATFORM=offscreen` the last three allow headless UI checks.
 
-On Linux the GUI process runs unprivileged. Scan for USB devices and explicitly
-select one to request polkit authorization for a narrowly scoped `setfacl`
-command, granting the current user temporary read/write ACL access to that
-device node. Selecting another device or rescanning restores the previous ACL;
-closing the app also removes the temporary rule. `acl` and a polkit agent are
-required. USB operations are pinned to the selected bus/address so devices
-with identical VID/PID values are not confused. A forced process termination
-or system crash can prevent cleanup and leave a temporary ACL for an
-administrator to remove manually.
+On Linux, install `qt6-wayland` for the native Wayland platform plugin. Without
+it, Qt can fall back to XWayland; set `QT_QPA_PLATFORM=xcb` to select XWayland
+explicitly and avoid a failed Wayland-plugin lookup. The GUI process runs
+unprivileged. Scan for USB devices and explicitly select one to request polkit
+authorization for a narrowly scoped `setfacl` command, granting the current
+user temporary read/write ACL access to that device node. Selecting another
+device or rescanning restores the previous ACL; closing the app also removes the
+temporary rule. `acl` and a polkit agent are required. USB operations are pinned
+to the selected bus/address so devices with identical VID/PID values are not
+confused. A forced process termination or system crash can prevent cleanup and
+leave a temporary ACL for an administrator to remove manually. The GUI waits
+up to two minutes for the desktop polkit authorization prompt.

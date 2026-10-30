@@ -55,8 +55,9 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
 
 - **Linux**：需要 Qt 6 运行时（`qt6-base`）、`acl` 工具包（提供 `getfacl` /
   `setfacl`）和 polkit agent；原生 Wayland 会话还需安装 `qt6-wayland`（否则 Qt 会使用 XWayland）。
-  扫描并明确选择设备后，程序会仅为该 USB 设备临时添加当前用户读写 ACL；重新
-  扫描、更换设备或退出时恢复原 ACL。GUI 是普通的动态链接 Qt 应用；Rust 后端已
+  若当前用户无法读取 USB 字符串描述符，程序会从 `/sys/bus/usb/devices` 补充厂商、
+  产品和序列号。扫描并明确选择设备后，程序会仅为该 USB 设备临时添加当前用户读写
+  ACL；重新扫描、更换设备或退出时恢复原 ACL。GUI 是普通的动态链接 Qt 应用；Rust 后端已
   静态链接进可执行文件，因此无法做成全静态。
 - **Windows**：`windeployqt` 会把 Qt DLL 与插件部署到 `auroku-gui.exe` 旁边，
   无需单独安装 Qt。
@@ -73,7 +74,8 @@ GUI 进程始终以当前用户运行，不会将整个程序提权重启。扫�
 选择其他设备、重新扫描或正常关闭软件时会恢复该节点原有 ACL；如果进程被强制终止
 或系统断电，临时 ACL 可能需要管理员手动清理。系统需安装 `acl` 工具包（`getfacl`
 和 `setfacl`）以及可用的 polkit agent。如果现有 ACL mask 不允许读写，程序会保持
-ACL 不变，不会扩大其他用户的权限。也可以按需配置持久化 udev 规则。
+ACL 不变，不会扩大其他用户的权限。授权提示最多等待两分钟；请在桌面 polkit
+授权对话框中及时确认。也可以按需配置持久化 udev 规则。
 
 GUI 中的“概览 / UIM 锁 / PIN & ICCID / 探测 / 批量 / 会话 / 控制台”页面覆盖了
 CLI 的全部 `--op` 操作，并在控制台页面显示 USB TX / RX 日志和完整 JSON 结果。
