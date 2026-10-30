@@ -5,8 +5,10 @@
 #include "core/AppState.h"
 #include "core/PageHost.h"
 #include "core/RustBridge.h"
+#include "platform/UsbAccess.h"
 
 class QComboBox;
+class QCloseEvent;
 class QFrame;
 class QLabel;
 class QProgressBar;
@@ -34,9 +36,8 @@ public:
     void confirmAction(const QString &titleKey, const QString &body, const QString &actionKey,
                        const std::function<void()> &action) override;
     void goToPage(PageId page) override;
-    bool elevated() const override;
-
 protected:
+    void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
@@ -59,6 +60,7 @@ private:
 
     AppState m_state;
     RustBridge m_bridge;
+    UsbAccess m_usbAccess;
 
     QStackedWidget *m_stack = nullptr;
     QVector<Page *> m_pages;
@@ -75,7 +77,6 @@ private:
     QLabel *m_statusChip = nullptr;
     QProgressBar *m_spinner = nullptr;
     QLabel *m_busyText = nullptr;
-    QLabel *m_privilege = nullptr;
     QLabel *m_versionLabel = nullptr;
 
     QFrame *m_toast = nullptr;

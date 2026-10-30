@@ -186,6 +186,22 @@ fn build_config(
         .and_then(|value| as_u16(value, "pid"))?;
 
     let mut config = DeviceConfig::new(vid, pid);
+    let bus = optional_u8(request, "bus")?;
+    let address = optional_u8(request, "address")?;
+    config.device_location = match (bus, address) {
+        (None, None) => None,
+        (Some(bus), Some(address)) if bus > 0 && address > 0 => Some((bus, address)),
+        (Some(_), Some(_)) => {
+            return Err(ApiError::invalid(
+                "`bus` and `address` must be greater than zero",
+            ))
+        }
+        _ => {
+            return Err(ApiError::invalid(
+                "`bus` and `address` must be provided together",
+            ))
+        }
+    };
     config.sn = optional_string(request, "sn");
     config.interface = optional_u8(request, "interface")?;
     if let Some(value) = request.get("ep_out").filter(|value| !value.is_null()) {
@@ -452,6 +468,29 @@ mod tests {
                 timeout_secs: 1.0
             }
         );
+    }
+
+    #[test]
+    fn config_accepts_selected_usb_location() {
+        let request = json!({
+            "vid": 0x0482,
+            "pid": 0x0a5c,
+            "bus": 2,
+            "address": 7,
+            "task": { "kind": "status" }
+        });
+        let config =
+            build_config(request.as_object().unwrap(), None, std::ptr::null_mut()).unwrap();
+        assert_eq!(config.device_location, Some((2, 7)));
+    }
+
+    #[test]
+    fn config_rejects_incomplete_usb_location() {
+        let request = json!({ "vid": 0x0482, "pid": 0x0a5c, "bus": 2 });
+        let error = build_config(request.as_object().unwrap(), None, std::ptr::null_mut())
+            .err()
+            .unwrap();
+        assert_eq!(error.kind, "ValueError");
     }
 
     #[test]

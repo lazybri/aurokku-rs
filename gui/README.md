@@ -21,7 +21,7 @@ gui/
       RustBridge.{h,cpp}     QObject facade over the worker thread
       RustWorker.{h,cpp}     blocking FFI calls, log trampoline
       JsonHelpers.{h,cpp}    Python-like JSON value rendering
-    platform/Elevate.{h,cpp} Linux polkit re-exec (no-op elsewhere)
+    platform/UsbAccess.{h,cpp} temporary per-device Linux USB ACL management
     ui/
       Theme.{h,cpp}          light/dark Qt palettes + minimal QSS
       I18n.{h,cpp}           Chinese source strings → English dictionary
@@ -49,7 +49,8 @@ CMake builds `crates/auroku-ffi` with Cargo and links the resulting static
 library (`libauroku_ffi.a` / `auroku_ffi.lib`) directly into the GUI executable.
 No separate FFI shared library is needed at build time or at runtime. Native
 Wayland sessions also need the distribution package `qt6-wayland` (otherwise Qt
-falls back to XWayland).
+falls back to XWayland). Linux runtime ACL handling requires the `acl` package
+(`getfacl` and `setfacl`).
 
 ### FFI contract
 
@@ -89,10 +90,19 @@ Task kinds: `status`, `readuimlk`, `clearlk`, `writelk` (`value`, `control`),
 --lang=en|zh           initial interface language
 --dark                 start in the dark theme (default)
 --light                start in the light theme
---no-polkit            skip Linux polkit elevation
 --smoke-test           start, then quit (CI smoke test)
 --page=N               open page N (0 overview … 6 console)
 --screenshot=FILE      save a window screenshot and quit
 ```
 
 With `QT_QPA_PLATFORM=offscreen` the last three allow headless UI checks.
+
+On Linux the GUI process runs unprivileged. Scan for USB devices and explicitly
+select one to request polkit authorization for a narrowly scoped `setfacl`
+command, granting the current user temporary read/write ACL access to that
+device node. Selecting another device or rescanning restores the previous ACL;
+closing the app also removes the temporary rule. `acl` and a polkit agent are
+required. USB operations are pinned to the selected bus/address so devices
+with identical VID/PID values are not confused. A forced process termination
+or system crash can prevent cleanup and leave a temporary ACL for an
+administrator to remove manually.

@@ -53,10 +53,11 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
 
 平台说明：
 
-- **Linux**：需要 Qt 6 运行时（`qt6-base`）；原生 Wayland 会话还需安装
-  `qt6-wayland`（否则 Qt 会使用 XWayland）。访问 USB 设备通常需要 root 或对应
-  udev 规则。GUI 是普通的动态链接 Qt 应用；Rust 后端已静态链接进可执行文件，
-  因此无法做成全静态。
+- **Linux**：需要 Qt 6 运行时（`qt6-base`）、`acl` 工具包（提供 `getfacl` /
+  `setfacl`）和 polkit agent；原生 Wayland 会话还需安装 `qt6-wayland`（否则 Qt 会使用 XWayland）。
+  扫描并明确选择设备后，程序会仅为该 USB 设备临时添加当前用户读写 ACL；重新
+  扫描、更换设备或退出时恢复原 ACL。GUI 是普通的动态链接 Qt 应用；Rust 后端已
+  静态链接进可执行文件，因此无法做成全静态。
 - **Windows**：`windeployqt` 会把 Qt DLL 与插件部署到 `auroku-gui.exe` 旁边，
   无需单独安装 Qt。
 - **macOS**：`build-macos.sh` 产出 `dist/auroku-gui.app`（本机架构），并在可用时
@@ -65,23 +66,14 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
   可通过环境变量 `AUROKU_GUI_FONT=/path/to/font.ttf` 指定字体文件或字体族。
 - **权限**：与 CLI 相同；Windows 可能仍需安装 libusb 驱动。
 
-### Linux polkit 提权
+### Linux USB 权限
 
-Linux 上 GUI 启动时会默认调用 `pkexec`（polkit）请求 root 权限，认证成功后以
-root 重新执行自身，从而直接访问 USB 设备：
-
-- 跳过提权：启动参数 `--no-polkit`，或环境变量 `AUROKU_GUI_NO_POLKIT=1`。
-- 认证取消、polkit 不可用或 `pkexec` 缺失：程序会以普通用户继续运行，概览页
-  显示权限警告；USB 操作可能因权限不足而失败。
-- 提权时只转发显示 / 会话 / 语言相关环境变量（Wayland、X11、DBus、locale），
-  不会转发 `LD_*`、`PATH`、`HOME` 等敏感变量；世界可写的可执行文件会被拒绝提权。
-- 部分 Wayland 合成器可能限制 root 客户端。如果 root 模式无法连接显示，可尝试
-  `QT_QPA_PLATFORM=xcb`（需要 XWayland），或配置 udev 规则并以普通用户运行。
-- 纯 Wayland 会话（未设置 `DISPLAY`）下会自动跳过提权，因为 root 客户端通常
-  无法连接合成器。请使用 udev 规则，或设置 `QT_QPA_PLATFORM=xcb` 通过 XWayland
-  提权。
-- 安全提示：整进程以 root 运行会扩大攻击面。若不需要自动提权，可跳过 polkit
-  并仅为设备配置 udev 规则。
+GUI 进程始终以当前用户运行，不会将整个程序提权重启。扫描后明确选择 USB 设备，
+程序会通过 polkit 仅授权执行针对该设备的 `setfacl`，临时授予当前用户读写 ACL。
+选择其他设备、重新扫描或正常关闭软件时会恢复该节点原有 ACL；如果进程被强制终止
+或系统断电，临时 ACL 可能需要管理员手动清理。系统需安装 `acl` 工具包（`getfacl`
+和 `setfacl`）以及可用的 polkit agent。如果现有 ACL mask 不允许读写，程序会保持
+ACL 不变，不会扩大其他用户的权限。也可以按需配置持久化 udev 规则。
 
 GUI 中的“概览 / UIM 锁 / PIN & ICCID / 探测 / 批量 / 会话 / 控制台”页面覆盖了
 CLI 的全部 `--op` 操作，并在控制台页面显示 USB TX / RX 日志和完整 JSON 结果。
@@ -307,4 +299,3 @@ auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
   反推 11 位序列号。
 - 错误类型名（`ValueError` / `RuntimeError` / `TimeoutError`）与退出码
   （失败为 1）均与 Python 版保持一致。
-

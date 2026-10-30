@@ -81,8 +81,8 @@ set(APP_SOURCES
     src/core/RustWorker.h
     src/core/RustWorker.cpp
 
-    src/platform/Elevate.h
-    src/platform/Elevate.cpp
+    src/platform/UsbAccess.h
+    src/platform/UsbAccess.cpp
 
     src/ui/ConfirmDialog.h
     src/ui/ConfirmDialog.cpp

@@ -8,6 +8,8 @@ using AurokuLogCallback = void (*)(const char *line, void *user_data);
 
 char *auroku_ffi_version();
 char *auroku_scan_devices(int vid, int pid);
+// Requests may include the selected Linux USB "bus" and "address" to pin the
+// operation to the exact device node whose ACL was granted.
 char *auroku_run_task(const char *request_json, AurokuLogCallback callback, void *user_data);
 void auroku_string_free(char *text);
 }

@@ -346,6 +346,7 @@ pub type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct DeviceConfig {
     pub vid: u16,
     pub pid: u16,
+    pub device_location: Option<(u8, u8)>,
     pub sn: Option<String>,
     pub interface: Option<u8>,
     pub ep_out: u8,
@@ -363,6 +364,7 @@ impl DeviceConfig {
         Self {
             vid,
             pid,
+            device_location: None,
             sn: None,
             interface: None,
             ep_out: DEFAULT_EP_OUT,
@@ -480,6 +482,7 @@ impl BatchProfile {
 pub struct AuRokkuDevice {
     vid: u16,
     pid: u16,
+    device_location: Option<(u8, u8)>,
     sn: Option<String>,
     interface_num: Option<u8>,
     interface_alt: u8,
@@ -508,6 +511,7 @@ impl AuRokkuDevice {
     pub fn new(
         vid: u16,
         pid: u16,
+        device_location: Option<(u8, u8)>,
         sn: Option<String>,
         interface: Option<u8>,
         ep_out: u8,
@@ -518,6 +522,7 @@ impl AuRokkuDevice {
         Self {
             vid,
             pid,
+            device_location,
             sn,
             interface_num: interface,
             interface_alt: 0,
@@ -734,7 +739,12 @@ impl AuRokkuDevice {
                         Ok(descriptor) => descriptor,
                         Err(_) => continue,
                     };
-                    if descriptor.vendor_id() == self.vid && descriptor.product_id() == self.pid {
+                    if descriptor.vendor_id() == self.vid
+                        && descriptor.product_id() == self.pid
+                        && self.device_location.is_none_or(|(bus, address)| {
+                            candidate.bus_number() == bus && candidate.address() == address
+                        })
+                    {
                         found = Some(candidate);
                         break;
                     }
@@ -1911,6 +1921,7 @@ pub fn run_task(config: &DeviceConfig, task: &Task) -> AuRokkuResult<Value> {
     let mut device = AuRokkuDevice::new(
         config.vid,
         config.pid,
+        config.device_location,
         config.sn.clone(),
         config.interface,
         config.ep_out,
@@ -2455,6 +2466,7 @@ pub fn cli_main() {
     let config = DeviceConfig {
         vid: cli.vid,
         pid: cli.pid,
+        device_location: None,
         sn: cli.sn.clone(),
         interface: cli.interface,
         ep_out: cli.ep_out,

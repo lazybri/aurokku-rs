@@ -36,11 +36,6 @@ const QHash<QString, QString> &english()
         t[QStringLiteral("待命")] = QStringLiteral("Idle");
         t[QStringLiteral("扫描中")] = QStringLiteral("Scanning");
         t[QStringLiteral("等待操作")] = QStringLiteral("Waiting for an operation");
-        t[QStringLiteral("权限：root")] = QStringLiteral("Privilege: root");
-        t[QStringLiteral("权限：普通用户 · USB 访问可能受限")] =
-            QStringLiteral("Privilege: user · USB access may be limited");
-        t[QStringLiteral("USB 访问可能需要管理员权限")] =
-            QStringLiteral("USB access may require administrator privileges");
         t[QStringLiteral("auRokku v{version} · 基于Yuu所提供的代码二次开发 ©lazybri")] =
             QStringLiteral("auRokku v{version} · Based on code by Yuu, further developed ©lazybri");
         t[QStringLiteral("界面语言已切换为 {lang}")] =
@@ -54,13 +49,28 @@ const QHash<QString, QString> &english()
         t[QStringLiteral("后端版本")] = QStringLiteral("Backend version");
         t[QStringLiteral("Qt 版本")] = QStringLiteral("Qt version");
         t[QStringLiteral("后端 FFI 已连接")] = QStringLiteral("Rust FFI backend connected");
+        t[QStringLiteral("请先扫描并选择 USB 设备")] =
+            QStringLiteral("Scan for and select a USB device first");
+        t[QStringLiteral("所选 USB 设备的临时访问权限已失效，请重新选择设备")] =
+            QStringLiteral("Temporary access to the selected USB device expired; select it again");
+        t[QStringLiteral("VID / PID 与所选 USB 设备不匹配")] =
+            QStringLiteral("VID / PID does not match the selected USB device");
+        t[QStringLiteral("USB ACL 清理失败：{error}")] =
+            QStringLiteral("Failed to restore USB ACL: {error}");
+        t[QStringLiteral("USB ACL 清理失败")] = QStringLiteral("USB ACL cleanup failed");
+        t[QStringLiteral("无法授予所选 USB 设备访问权限：{error}")] =
+            QStringLiteral("Could not grant access to the selected USB device: {error}");
+        t[QStringLiteral("选择 USB 设备需要 pkexec 和 polkit 授权；GUI 本身不会以 root 运行。")] =
+            QStringLiteral("Selecting a USB device requires pkexec/polkit authorization; the GUI itself never runs as root.");
 
         // Overview ------------------------------------------------------------
         t[QStringLiteral("连接 au / SERI 设备，读取锁状态、PIN 与 SIM 信息")] =
             QStringLiteral("Connect to an au / SERI device and read lock state, PIN and SIM information");
-        t[QStringLiteral("当前以普通用户运行，USB 访问可能失败。可使用 pkexec 重新启动并完成 polkit 认证，或配置 udev 规则。")] =
-            QStringLiteral("Running as a normal user; USB access may fail. Restart via pkexec and complete polkit authentication, or configure a udev rule.");
-        t[QStringLiteral("选择已扫描设备…")] = QStringLiteral("Select a scanned device…");
+        t[QStringLiteral("扫描后选择设备将请求授权，并仅为当前 USB 设备临时添加读写 ACL；更换设备、重新扫描或退出软件时会恢复原规则。")] =
+            QStringLiteral("Selecting a scanned device requests authorization and adds a temporary read/write ACL only to that device. The original ACL is restored when changing devices, rescanning or exiting.");
+        t[QStringLiteral("请选择 USB 设备")] = QStringLiteral("Select a USB device");
+        t[QStringLiteral("未发现设备（请扫描 USB 设备）")] =
+            QStringLiteral("No devices found (scan for USB devices)");
         t[QStringLiteral("选择设备")] = QStringLiteral("Select device");
         t[QStringLiteral("设备连接")] = QStringLiteral("Device connection");
         t[QStringLiteral("扫描 USB 总线并选择目标设备")] =
@@ -68,8 +78,6 @@ const QHash<QString, QString> &english()
         t[QStringLiteral("扫描中…")] = QStringLiteral("Scanning…");
         t[QStringLiteral("扫描全部")] = QStringLiteral("Scan all");
         t[QStringLiteral("仅筛选 VID/PID")] = QStringLiteral("Filter VID/PID");
-        t[QStringLiteral("未发现设备（请检查 USB 权限后重新扫描）")] =
-            QStringLiteral("No devices found (check USB permissions and rescan)");
         t[QStringLiteral("SN（可选）")] = QStringLiteral("SN (optional)");
         t[QStringLiteral("SKYKA077394 或 16 位 hex")] = QStringLiteral("SKYKA077394 or 16 hex digits");
         t[QStringLiteral("接口号（可选）")] = QStringLiteral("Interface (optional)");
@@ -295,10 +303,10 @@ const QHash<QString, QString> &english()
         t[QStringLiteral("版本 {version}")] = QStringLiteral("Version {version}");
         t[QStringLiteral("基于 Qt 6 Widgets 的前端，通过 C ABI 直接调用 Rust 后端。协议、Type2Auth 算法与 JSON 结构均与 auRokku.py 保持一致。")] =
             QStringLiteral("A Qt 6 Widgets front-end that calls the Rust backend through a C ABI. The protocol, Type2Auth algorithm and JSON structure match auRokku.py.");
-        t[QStringLiteral("跨平台：Linux、Windows 与 macOS。USB 访问在 Linux 上通常需要 udev 规则或 root 权限。")] =
-            QStringLiteral("Cross-platform: Linux, Windows and macOS. USB access on Linux usually requires a udev rule or root privileges.");
-        t[QStringLiteral("Linux 启动时会通过 pkexec（polkit）请求 root 权限；使用 --no-polkit 或 AUROKU_GUI_NO_POLKIT=1 可跳过。认证取消或 polkit 不可用时会以普通用户继续运行。")] =
-            QStringLiteral("On Linux the app requests root via pkexec (polkit) at startup; use --no-polkit or AUROKU_GUI_NO_POLKIT=1 to skip. If authentication is cancelled or polkit is unavailable it continues as a normal user.");
+        t[QStringLiteral("跨平台：Linux、Windows 与 macOS。Linux 通过 ACL 为所选 USB 设备临时授予读写权限。")] =
+            QStringLiteral("Cross-platform: Linux, Windows and macOS. Linux temporarily grants USB read/write access to the selected device through ACLs.");
+        t[QStringLiteral("Linux GUI 始终以普通用户运行。修改 ACL 时只通过 pkexec 执行 setfacl，不会提权重启整个 GUI；需要安装 acl 和 polkit。")] =
+            QStringLiteral("The Linux GUI always runs as the current user. It uses pkexec only to run setfacl for ACL changes, never to elevate the GUI; acl and polkit are required.");
         t[QStringLiteral("所有 USB 操作均在后台线程执行。")] =
             QStringLiteral("All USB operations run on a background thread.");
 
@@ -328,23 +336,6 @@ const QHash<QString, QString> &english()
         t[QStringLiteral("VID / PID 格式无效")] = QStringLiteral("Invalid VID / PID format");
         t[QStringLiteral("无效的十六进制值：{text}")] = QStringLiteral("Invalid hex value: {text}");
         t[QStringLiteral("无效的十六进制字节：{text}")] = QStringLiteral("Invalid hex byte: {text}");
-        t[QStringLiteral("无法定位可执行文件：{error}；将以普通用户运行")] =
-            QStringLiteral("Unable to locate the executable: {error}; continuing as a normal user");
-        t[QStringLiteral("可执行文件路径无效；将以普通用户运行")] =
-            QStringLiteral("The executable path is invalid; continuing as a normal user");
-        t[QStringLiteral("可执行文件对任意用户可写，拒绝提权；请修复文件权限后重试")] =
-            QStringLiteral("The executable is world-writable; refusing elevation. Fix the file permissions and retry.");
-        t[QStringLiteral("未找到 pkexec（polkit），将以普通用户运行")] =
-            QStringLiteral("pkexec (polkit) not found; continuing as a normal user");
-        t[QStringLiteral("正在通过 polkit 请求 root 权限…")] =
-            QStringLiteral("Requesting root via polkit…");
-        t[QStringLiteral("polkit 认证未完成，将以普通用户继续运行（USB 访问可能受限）")] =
-            QStringLiteral("Polkit authentication did not complete; continuing as a normal user (USB access may be limited)");
-        t[QStringLiteral("检测到纯 Wayland 会话，已跳过 polkit 提权（root 客户端通常无法连接 Wayland）。可设置 QT_QPA_PLATFORM=xcb 或配置 udev 规则。")] =
-            QStringLiteral("Pure Wayland session detected; skipping polkit elevation (root clients usually cannot connect to Wayland). Set QT_QPA_PLATFORM=xcb or configure a udev rule.");
-        t[QStringLiteral("无法启动 pkexec：{error}；将以普通用户运行")] =
-            QStringLiteral("Unable to start pkexec: {error}; continuing as a normal user");
-
         return t;
     }();
     return table;

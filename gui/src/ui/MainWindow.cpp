@@ -9,9 +9,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QDebug>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QStackedWidget>
@@ -20,7 +22,6 @@
 #include <QVBoxLayout>
 
 #include "core/FfiApi.h"
-#include "platform/Elevate.h"
 #include "ui/ConfirmDialog.h"
 #include "ui/Fonts.h"
 #include "ui/I18n.h"
@@ -98,7 +99,26 @@ MainWindow::MainWindow(QWidget *parent)
     QTimer::singleShot(160, this, [this] { scanDevices(false); });
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow()
+{
+    QString error;
+    if (!m_usbAccess.revoke(&error) && !error.isEmpty())
+        qWarning().noquote() << "Failed to restore USB ACL:" << error;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    QString error;
+    if (m_usbAccess.revoke(&error)) {
+        event->accept();
+        return;
+    }
+
+    QMessageBox::warning(this, I18n::t(QStringLiteral("USB ACL 清理失败")),
+                         I18n::tf(QStringLiteral("USB ACL 清理失败：{error}"),
+                                  {{QStringLiteral("error"), error}}));
+    event->ignore();
+}
 
 // ==============================================================================
 // UI construction
@@ -299,13 +319,6 @@ QWidget *MainWindow::buildFooter()
     layout->addWidget(m_busyText);
     layout->addStretch(1);
 
-#ifdef Q_OS_LINUX
-    m_privilege = Ui::label(elevated() ? QStringLiteral("权限：root")
-                                       : QStringLiteral("权限：普通用户 · USB 访问可能受限"),
-                            QStringLiteral("subtle"), m_footer);
-    layout->addWidget(m_privilege);
-#endif
-
     m_versionLabel = new QLabel(
         QStringLiteral("auRokku v%1 · Qt %2").arg(QStringLiteral(AUROKU_APP_VERSION), qVersion()),
         m_footer);
@@ -362,19 +375,6 @@ void MainWindow::connectBridge()
 
         logLine(I18n::tf(QStringLiteral("扫描完成，发现 {n} 个 USB 设备"),
                          {{QStringLiteral("n"), m_state.devices.size()}}));
-
-        m_state.selectedDevice = -1;
-        quint16 vid = 0;
-        quint16 pid = 0;
-        if (parseHexU16(m_state.vidText, &vid, nullptr)
-            && parseHexU16(m_state.pidText, &pid, nullptr)) {
-            for (int i = 0; i < m_state.devices.size(); ++i) {
-                if (m_state.devices.at(i).vid == vid && m_state.devices.at(i).pid == pid) {
-                    selectDevice(i, false);
-                    break;
-                }
-            }
-        }
 
         updateChrome();
         refreshPages();
@@ -472,11 +472,32 @@ void MainWindow::startTask(const QJsonObject &task, const QString &labelKey)
         return;
     }
 
+    QJsonObject taskRequest = request.request;
+#if defined(Q_OS_LINUX) || defined(__linux__)
+    if (m_state.selectedDevice < 0 || m_state.selectedDevice >= m_state.devices.size()) {
+        showToast(I18n::t(QStringLiteral("请先扫描并选择 USB 设备")), Tone::Warning);
+        return;
+    }
+    const DeviceInfo &device = m_state.devices.at(m_state.selectedDevice);
+    if (!m_usbAccess.isGrantedFor(device.bus, device.address)) {
+        showToast(I18n::t(QStringLiteral("所选 USB 设备的临时访问权限已失效，请重新选择设备")),
+                  Tone::Error);
+        return;
+    }
+    if (request.request.value(QStringLiteral("vid")).toInt() != device.vid
+        || request.request.value(QStringLiteral("pid")).toInt() != device.pid) {
+        showToast(I18n::t(QStringLiteral("VID / PID 与所选 USB 设备不匹配")), Tone::Error);
+        return;
+    }
+    taskRequest.insert(QStringLiteral("bus"), device.bus);
+    taskRequest.insert(QStringLiteral("address"), device.address);
+#endif
+
     const QString label = I18n::t(labelKey);
     m_state.busy = true;
     m_state.busyLabel = label;
     logLine(QStringLiteral("▶ ") + label);
-    m_bridge.runAsync(request.request, label);
+    m_bridge.runAsync(taskRequest, label);
     updateChrome();
     refreshPages();
 }
@@ -500,6 +521,17 @@ void MainWindow::scanDevices(bool filtered)
         pid = parsedPid;
     }
 
+    QString aclError;
+    if (!m_usbAccess.revoke(&aclError)) {
+        showToast(I18n::tf(QStringLiteral("USB ACL 清理失败：{error}"),
+                           {{QStringLiteral("error"), aclError}}),
+                  Tone::Error);
+        refreshPages();
+        return;
+    }
+
+    m_state.selectedDevice = -1;
+    m_state.devices.clear();
     m_state.scanning = true;
     m_state.scanError.clear();
     m_bridge.scanAsync(vid, pid);
@@ -509,10 +541,40 @@ void MainWindow::scanDevices(bool filtered)
 
 void MainWindow::selectDevice(int index, bool announce)
 {
-    if (index < 0 || index >= m_state.devices.size())
+    if (index < -1 || index >= m_state.devices.size())
         return;
 
+    if (index == m_state.selectedDevice)
+        return;
+
+    QString aclError;
+    if (!m_usbAccess.revoke(&aclError)) {
+        showToast(I18n::tf(QStringLiteral("USB ACL 清理失败：{error}"),
+                           {{QStringLiteral("error"), aclError}}),
+                  Tone::Error);
+        refreshPages();
+        return;
+    }
+
+    m_state.selectedDevice = -1;
+    if (index == -1) {
+        refreshPages();
+        return;
+    }
+
     const DeviceInfo &device = m_state.devices.at(index);
+#if defined(Q_OS_LINUX) || defined(__linux__)
+    if (!m_usbAccess.grant(device.bus, device.address, &aclError)) {
+        logLine(I18n::tf(QStringLiteral("无法授予所选 USB 设备访问权限：{error}"),
+                         {{QStringLiteral("error"), aclError}}));
+        showToast(I18n::tf(QStringLiteral("无法授予所选 USB 设备访问权限：{error}"),
+                           {{QStringLiteral("error"), aclError}}),
+                  Tone::Error);
+        refreshPages();
+        return;
+    }
+#endif
+
     m_state.selectedDevice = index;
     m_state.vidText = QStringLiteral("%1").arg(device.vid, 4, 16, QLatin1Char('0'));
     m_state.pidText = QStringLiteral("%1").arg(device.pid, 4, 16, QLatin1Char('0'));
@@ -561,11 +623,6 @@ void MainWindow::goToPage(PageId page)
         return;
     m_navButtons.at(index)->setChecked(true);
     m_stack->setCurrentIndex(index);
-}
-
-bool MainWindow::elevated() const
-{
-    return Elevate::isEffectiveRoot();
 }
 
 // ==============================================================================
@@ -726,8 +783,8 @@ void MainWindow::showAbout()
 
     for (const char *key :
          {"基于 Qt 6 Widgets 的前端，通过 C ABI 直接调用 Rust 后端。协议、Type2Auth 算法与 JSON 结构均与 auRokku.py 保持一致。",
-          "跨平台：Linux、Windows 与 macOS。USB 访问在 Linux 上通常需要 udev 规则或 root 权限。",
-          "Linux 启动时会通过 pkexec（polkit）请求 root 权限；使用 --no-polkit 或 AUROKU_GUI_NO_POLKIT=1 可跳过。认证取消或 polkit 不可用时会以普通用户继续运行。",
+          "跨平台：Linux、Windows 与 macOS。Linux 通过 ACL 为所选 USB 设备临时授予读写权限。",
+          "Linux GUI 始终以普通用户运行；仅在修改所选设备 ACL 时通过 polkit 调用 setfacl。",
           "所有 USB 操作均在后台线程执行。"}) {
         auto *text = new QLabel(I18n::t(QString::fromUtf8(key)), &dialog);
         text->setWordWrap(true);

@@ -159,10 +159,13 @@ else
     if [[ -n "$QT_PREFIX" ]]; then
         CMAKE_ARGS+=("-DCMAKE_PREFIX_PATH=$QT_PREFIX")
     fi
+    if command -v pkg-config >/dev/null 2>&1; then
+        CMAKE_ARGS+=("-DPKG_CONFIG_EXECUTABLE=$(command -v pkg-config)")
+    fi
 
-    if env -u RUSTFLAGS -u C_INCLUDE_PATH cmake "${CMAKE_ARGS[@]}" >/dev/null; then
+    if env -u RUSTFLAGS -u C_INCLUDE_PATH -u PKG_CONFIG cmake "${CMAKE_ARGS[@]}" >/dev/null; then
         echo "==> cmake --build $GUI_BUILD (Qt 6 GUI)"
-        env -u RUSTFLAGS -u C_INCLUDE_PATH cmake --build "$GUI_BUILD"
+        env -u RUSTFLAGS -u C_INCLUDE_PATH -u PKG_CONFIG cmake --build "$GUI_BUILD"
         GUI_BUILT=1
     else
         echo "warning: Qt 6 development files not found; skipping the GUI." >&2

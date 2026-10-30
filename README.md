@@ -61,10 +61,12 @@ Developer flags: `--smoke-test` (start, then quit), `--screenshot=FILE` and
 
 Platform notes:
 
-- **Linux**: requires the Qt 6 runtime (`qt6-base`); for native Wayland also
+- **Linux**: requires the Qt 6 runtime (`qt6-base`) and the `acl` package
+  (`getfacl` / `setfacl`); for native Wayland also
   install `qt6-wayland` (otherwise Qt uses XWayland). USB access usually needs
-  root or a matching udev rule. The GUI is a normal dynamic Qt application; the
-  Rust backend is linked into the executable and cannot be fully static.
+  the app's temporary per-device ACL or a matching udev rule. The GUI is a
+  normal dynamic Qt application; the Rust backend is linked into the executable
+  and cannot be fully static.
 - **Windows**: Qt DLLs and plugins are deployed next to `auroku-gui.exe` by
   `windeployqt`; no separate Qt installation is required.
 - **macOS**: `build-macos.sh` produces `dist/auroku-gui.app` (native
@@ -74,28 +76,19 @@ Platform notes:
   `AUROKU_GUI_FONT=/path/to/font.ttf`.
 - **Permissions**: same as the CLI; a libusb driver may be required on Windows.
 
-### Linux polkit elevation
+### Linux USB permissions
 
-On Linux the GUI requests root through `pkexec` (polkit) at start-up by default.
-After successful authentication it re-executes itself as root so it can access
-USB devices directly:
-
-- Skip elevation with `--no-polkit` or `AUROKU_GUI_NO_POLKIT=1`.
-- If authentication is cancelled, polkit is unavailable or `pkexec` is missing,
-  the app continues as a normal user and shows a permission warning on the
-  overview page; USB operations may fail due to insufficient permissions.
-- Only display / session / locale variables are forwarded (Wayland, X11, DBus,
-  locale); sensitive variables such as `LD_*`, `PATH` and `HOME` are not.
-  World-writable executables are refused.
-- Some Wayland compositors restrict root clients. If root mode cannot connect to
-  the display, try `QT_QPA_PLATFORM=xcb` (requires XWayland), or configure a
-  udev rule and run unprivileged.
-- On pure Wayland sessions (no `DISPLAY`) automatic elevation is skipped,
-  because a root client usually cannot connect to the compositor. Use a udev
-  rule, or run with `QT_QPA_PLATFORM=xcb` to elevate through XWayland.
-- Security note: running the whole process as root increases the attack surface.
-  If you do not need automatic elevation, skip polkit and configure a udev rule
-  for the device.
+The GUI process always runs as the current user; it does not restart the whole
+application as root. After scanning, explicitly select a USB device to request
+polkit authorization for a narrowly scoped `setfacl` operation, granting the
+current user temporary read/write access to only that device node. The original
+ACL is restored when selecting another device, rescanning, or closing the app.
+The `acl` package (`getfacl` and `setfacl`) and a working polkit agent must be
+installed. A forced process termination or system crash can prevent cleanup and
+leave a temporary ACL that an administrator may need to remove manually.
+If the device ACL mask prevents read/write access, the app leaves the ACL
+unchanged rather than widening access for other users. A persistent udev rule
+can be used instead when preferred.
 
 The GUI’s Overview / UIM Lock / PIN & ICCID / Probe / Batch / Session / Console
 pages cover every CLI `--op` operation. The console page shows USB TX/RX logs and

@@ -8,7 +8,6 @@
 #include <QTimer>
 #include <cstring>
 
-#include "platform/Elevate.h"
 #include "ui/Fonts.h"
 #include "ui/I18n.h"
 #include "ui/MainWindow.h"
@@ -39,10 +38,6 @@ int main(int argc, char **argv)
         else if (std::strncmp(argv[i], "--screenshot=", 13) == 0)
             screenshotPath = QString::fromLocal8Bit(argv[i] + 13);
     }
-
-    // Elevate before QApplication so the elevated child owns the display
-    // connection from the start (Linux only; no-op elsewhere).
-    Elevate::maybeElevate(argc, argv);
 
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("auRokku"));

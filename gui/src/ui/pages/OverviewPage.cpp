@@ -48,12 +48,12 @@ OverviewPage::OverviewPage(PageHost *host, QWidget *parent)
     addPageHeader(QStringLiteral("概览"),
                   QStringLiteral("连接 au / SERI 设备，读取锁状态、PIN 与 SIM 信息"));
 
-    if (!host->elevated()) {
-        m_content->addWidget(Ui::banner(
-            Icon::Warning,
-            QStringLiteral("当前以普通用户运行，USB 访问可能失败。可使用 pkexec 重新启动并完成 polkit 认证，或配置 udev 规则。"),
-            Tone::Warning));
-    }
+#if defined(Q_OS_LINUX) || defined(__linux__)
+    m_content->addWidget(Ui::banner(
+        Icon::Info,
+        QStringLiteral("扫描后选择设备将请求授权，并仅为当前 USB 设备临时添加读写 ACL；更换设备、重新扫描或退出软件时会恢复原规则。"),
+        Tone::Neutral));
+#endif
 
     buildConnectionCard();
     buildQuickActionsCard();
@@ -87,7 +87,7 @@ void OverviewPage::buildConnectionCard()
             [this](int index) {
                 if (m_comboPlaceholder || index < 0)
                     return;
-                host()->selectDevice(index, true);
+                host()->selectDevice(index - 1, true);
             });
 
     m_scanErrorHost = new QWidget(frame);
@@ -237,7 +237,8 @@ void OverviewPage::rebuildDeviceCombo()
     signature.reserve(state().devices.size());
     for (const DeviceInfo &device : state().devices)
         signature.append(device.id + QLatin1Char('/') + device.display + QLatin1Char('/')
-                         + device.serial);
+                         + device.serial + QLatin1Char('/') + QString::number(device.bus)
+                         + QLatin1Char('/') + QString::number(device.address));
 
     const QString joined = signature.join(QLatin1Char('|'))
         + QLatin1Char('#') + I18n::instance().nativeName();
@@ -248,17 +249,15 @@ void OverviewPage::rebuildDeviceCombo()
     const QSignalBlocker blocker(m_deviceCombo);
     m_deviceCombo->clear();
     m_comboPlaceholder = state().devices.isEmpty();
-    if (m_comboPlaceholder) {
-        m_deviceCombo->addItem(I18n::t(QStringLiteral("未发现设备（请检查 USB 权限后重新扫描）")));
-        m_deviceCombo->setCurrentIndex(-1);
-        return;
-    }
+    m_deviceCombo->addItem(I18n::t(m_comboPlaceholder
+                                       ? QStringLiteral("未发现设备（请扫描 USB 设备）")
+                                       : QStringLiteral("请选择 USB 设备")));
 
     for (const DeviceInfo &device : state().devices)
         m_deviceCombo->addItem(QStringLiteral("%1  ·  %2").arg(device.display, device.id));
 
     const int index = state().selectedDevice;
-    m_deviceCombo->setCurrentIndex(index >= 0 && index < state().devices.size() ? index : 0);
+    m_deviceCombo->setCurrentIndex(index >= 0 && index < state().devices.size() ? index + 1 : 0);
 }
 
 void OverviewPage::updateScanError()

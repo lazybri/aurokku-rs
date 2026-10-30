@@ -34,7 +34,4 @@ public:
                                const std::function<void()> &action) = 0;
 
     virtual void goToPage(PageId page) = 0;
-
-    /// True on Linux when running as root (or on platforms without elevation).
-    virtual bool elevated() const = 0;
 };
