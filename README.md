@@ -62,9 +62,10 @@ Developer flags: `--smoke-test` (start, then quit), `--screenshot=FILE` and
 Platform notes:
 
 - **Linux**: requires the Qt 6 runtime (`qt6-base`) and the `acl` package
-  (`getfacl` / `setfacl`); for native Wayland also
-  install `qt6-wayland` (otherwise Qt uses XWayland; set
-  `QT_QPA_PLATFORM=xcb` to select XWayland explicitly). If USB string descriptors
+  (`getfacl` / `setfacl`); the Wayland QPA plugin is linked into the executable
+  statically, so Wayland sessions run natively and only fall back to
+  XWayland/X11 (`xcb`) when Wayland is unavailable; set `QT_QPA_PLATFORM=xcb` to
+  force XWayland. If USB string descriptors
   are inaccessible to the current user, manufacturer, product and serial names
   are read from `/sys/bus/usb/devices`. USB access usually needs
   the app's temporary per-device ACL or a matching udev rule. The GUI is a

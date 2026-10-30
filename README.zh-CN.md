@@ -54,7 +54,8 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
 平台说明：
 
 - **Linux**：需要 Qt 6 运行时（`qt6-base`）、`acl` 工具包（提供 `getfacl` /
-  `setfacl`）和 polkit agent；原生 Wayland 会话还需安装 `qt6-wayland`（否则 Qt 会使用 XWayland）。
+  `setfacl`）和 polkit agent；Wayland 平台插件已静态链接进可执行文件，Wayland 会话下默认使用原生
+  Wayland，仅在不可用时回退 XWayland/X11（`xcb`），可用 `QT_QPA_PLATFORM=xcb` 强制使用 XWayland。
   若当前用户无法读取 USB 字符串描述符，程序会从 `/sys/bus/usb/devices` 补充厂商、
   产品和序列号。扫描并明确选择设备后，程序会仅为该 USB 设备临时添加当前用户读写
   ACL；重新扫描、更换设备或退出时恢复原 ACL。GUI 是普通的动态链接 Qt 应用；Rust 后端已

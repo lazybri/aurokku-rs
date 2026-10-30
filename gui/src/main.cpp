@@ -40,6 +40,15 @@ int main(int argc, char **argv)
             screenshotPath = QString::fromLocal8Bit(argv[i] + 13);
     }
 
+    // The Wayland QPA plugin is linked statically into the executable. Prefer
+    // native Wayland on a Wayland session (checked via WAYLAND_DISPLAY, so an
+    // explicit QT_QPA_PLATFORM always wins) and keep xcb as the fallback.
+#ifdef AUROKU_HAVE_WAYLAND_PLUGIN
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")
+        && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY"))
+        qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("wayland;xcb"));
+#endif
+
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("auRokku"));
     QApplication::setApplicationDisplayName(QStringLiteral("auRokku"));

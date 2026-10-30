@@ -122,6 +122,18 @@ set(APP_SOURCES
 
 qt_add_executable(auroku-qt WIN32 MACOSX_BUNDLE ${APP_SOURCES})
 
+# With a static Qt only the default QPA plugin (xcb) is imported automatically.
+# Import the Wayland platform plugin as well, so Wayland sessions run natively
+# instead of falling back to XWayland. Both plugins stay linked: Qt uses the
+# Wayland plugin when available and otherwise falls back to xcb.
+if(UNIX AND NOT APPLE AND TARGET Qt6::QWaylandIntegrationPlugin)
+    get_target_property(_auroku_qwayland_type Qt6::QWaylandIntegrationPlugin TYPE)
+    if(_auroku_qwayland_type STREQUAL "STATIC_LIBRARY")
+        qt_import_plugins(auroku-qt INCLUDE Qt6::QWaylandIntegrationPlugin)
+        target_compile_definitions(auroku-qt PRIVATE AUROKU_HAVE_WAYLAND_PLUGIN=1)
+    endif()
+endif()
+
 set_target_properties(auroku-qt PROPERTIES OUTPUT_NAME "auroku-gui")
 
 add_dependencies(auroku-qt auroku_ffi_build)

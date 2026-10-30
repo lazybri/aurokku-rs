@@ -47,10 +47,11 @@ cmake --build build/gui
 
 CMake builds `crates/auroku-ffi` with Cargo and links the resulting static
 library (`libauroku_ffi.a` / `auroku_ffi.lib`) directly into the GUI executable.
-No separate FFI shared library is needed at build time or at runtime. Native
-Wayland sessions also need the distribution package `qt6-wayland` (otherwise Qt
-falls back to XWayland). Linux runtime ACL handling requires the `acl` package
-(`getfacl` and `setfacl`).
+No separate FFI shared library is needed at build time or at runtime. On Linux
+the Wayland QPA plugin is imported statically as well (see
+`qt_import_plugins` in `CMakeLists.txt`), so Wayland sessions run natively and
+XWayland is only a fallback. Linux runtime ACL handling requires the `acl`
+package (`getfacl` and `setfacl`).
 
 ### FFI contract
 
@@ -97,9 +98,9 @@ Task kinds: `status`, `readuimlk`, `clearlk`, `writelk` (`value`, `control`),
 
 With `QT_QPA_PLATFORM=offscreen` the last three allow headless UI checks.
 
-On Linux, install `qt6-wayland` for the native Wayland platform plugin. Without
-it, Qt can fall back to XWayland; set `QT_QPA_PLATFORM=xcb` to select XWayland
-explicitly and avoid a failed Wayland-plugin lookup. The GUI process runs
+On Linux, the Wayland platform plugin is linked statically into the executable.
+Wayland sessions run natively and Qt falls back to XWayland only when Wayland is
+unavailable; set `QT_QPA_PLATFORM=xcb` to force XWayland. The GUI process runs
 unprivileged. Scan for USB devices and explicitly select one to request polkit
 authorization for a narrowly scoped `setfacl` command, granting the current
 user temporary read/write ACL access to that device node. Selecting another
