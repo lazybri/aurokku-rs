@@ -1934,6 +1934,88 @@ fn fill_strings_from_sysfs(root: &std::path::Path, summary: &mut DeviceSummary) 
     }
 }
 
+/// Extract the human readable part of a Windows device property.
+///
+/// The registry stores either plain text or an indirect string such as
+/// "@usbser.inf,%usbserial.devicedesc%;USB Serial Device"; the text after the
+/// last semicolon is the localised name.
+fn decode_device_text(raw: &str) -> String {
+    let text = raw.trim();
+    let text = match text.rfind(';') {
+        Some(index) if text.starts_with('@') => text[index + 1..].trim(),
+        _ => text,
+    };
+    text.trim().to_string()
+}
+/// Look up the display name of a device in the Windows device tree.
+///
+/// Used when the USB string descriptors cannot be read (device already claimed
+/// by another driver, or no permission to open it). Returns the product name
+/// and the manufacturer.
+#[cfg(windows)]
+type DeviceName = Option<(Option<String>, Option<String>)>;
+
+/// Per-scan cache of the registry lookups.
+#[cfg(windows)]
+type DeviceNameCache = std::collections::HashMap<(u16, u16), DeviceName>;
+
+#[cfg(windows)]
+fn windows_device_strings(vid: u16, pid: u16, cache: &mut DeviceNameCache) -> DeviceName {
+    use std::os::windows::process::CommandExt;
+
+    if let Some(hit) = cache.get(&(vid, pid)) {
+        return hit.clone();
+    }
+
+    let key = format!("HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_{vid:04X}&PID_{pid:04X}");
+    let lookup = std::process::Command::new("reg")
+        .args(["query", &key, "/s"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()
+        .and_then(|output| {
+            let text = String::from_utf8_lossy(&output.stdout).into_owned();
+            let mut friendly = None;
+            let mut description = None;
+            let mut manufacturer = None;
+
+            for line in text.lines() {
+                let line = line.trim_start();
+                if line.starts_with("HKEY_") {
+                    continue;
+                }
+                let Some(index) = line.find("REG_SZ").or_else(|| line.find("REG_EXPAND_SZ")) else {
+                    continue;
+                };
+                let name = line[..index].trim();
+                let rest = line[index..]
+                    .split_once(char::is_whitespace)
+                    .map(|(_, value)| value.trim())
+                    .unwrap_or_default();
+                if rest.is_empty() {
+                    continue;
+                }
+                let value = decode_device_text(rest);
+                match name {
+                    "FriendlyName" => friendly = Some(value),
+                    "DeviceDesc" => description = Some(value),
+                    "Mfg" => manufacturer = Some(value),
+                    _ => {}
+                }
+            }
+
+            let product = friendly.or(description);
+            if product.is_none() && manufacturer.is_none() {
+                None
+            } else {
+                Some((product, manufacturer))
+            }
+        });
+
+    cache.insert((vid, pid), lookup.clone());
+    lookup
+}
+
 /// Enumerate USB devices, optionally filtered by VID/PID.
 ///
 /// String descriptors are only read when the platform allows it; a permission
@@ -1950,6 +2032,9 @@ pub fn scan_devices(
         .map_err(|e| AuRokkuError::Runtime(format!("USB error: {e}")))?;
 
     let mut out = Vec::new();
+    // Names are cached per scan so a driver switch is picked up on the next one.
+    #[cfg(windows)]
+    let mut name_cache = std::collections::HashMap::new();
     for candidate in devices.iter() {
         let descriptor = match candidate.device_descriptor() {
             Ok(descriptor) => descriptor,
@@ -1995,6 +2080,18 @@ pub fn scan_devices(
 
         #[cfg(target_os = "linux")]
         fill_strings_from_sysfs(std::path::Path::new(SYSFS_USB_DEVICES), &mut summary);
+
+        // Windows keeps a display name in the device tree even for devices we
+        // are not allowed to open (for example ones bound to usbser.sys).
+        #[cfg(windows)]
+        if summary.product.is_none() || summary.manufacturer.is_none() {
+            if let Some((product, manufacturer)) =
+                windows_device_strings(summary.vid, summary.pid, &mut name_cache)
+            {
+                summary.product = summary.product.or(product);
+                summary.manufacturer = summary.manufacturer.or(manufacturer);
+            }
+        }
 
         out.push(summary);
     }
@@ -2725,6 +2822,31 @@ pub fn cli_main() {
 mod tests {
     use super::*;
 
+    #[test]
+    fn decode_device_text_strips_indirect_strings() {
+        assert_eq!(
+            decode_device_text("@usbser.inf,%usbserial.devicedesc%;USB Serial Device"),
+            "USB Serial Device"
+        );
+        assert_eq!(
+            decode_device_text("au T008 High Speed"),
+            "au T008 High Speed"
+        );
+        assert_eq!(decode_device_text("  plain  "), "plain");
+        assert_eq!(
+            decode_device_text("@oem61.inf,%devicename%;au T008"),
+            "au T008"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "queries the live Windows device tree"]
+    fn windows_device_strings_live() {
+        let hit = windows_device_strings(0x04C5, 0x1270, &mut DeviceNameCache::new());
+        println!("lookup: {hit:?}");
+        assert!(hit.is_some(), "expected a name in the registry");
+    }
     #[test]
     fn nibble_roundtrip() {
         let data = [0x00, 0x0F, 0xA5, 0xFF, 0x53, 0x01];
