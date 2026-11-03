@@ -237,10 +237,12 @@ To build only the current machine architecture, use `./build-macos.sh --native`
 Set `AUROKU_BUILD_DEBUG=1` (or pass `--debug` / `-Debug` to the build scripts)
 to reproduce a debug build locally.
 
-The Windows job additionally builds **libwdi as a static library** (WDK redist
-MSI extracted with `msiexec /a`, no admin rights on the runner) and links it
-into both binaries, so the shipped tools can install the WinUSB driver without
-an external `wdi-simple.exe`. See [docs/windows-driver.md](docs/windows-driver.md).
+The Windows job consumes a **static libwdi** built once by the reusable pipeline
+on the orphan `libwdi-static` branch (pinned by the immutable
+`libwdi-1.5.1-x64-r1` tag) and links it into both binaries, so the shipped tools
+can install the WinUSB driver without an external `wdi-simple.exe`. The build
+recipe and LGPL compliance notes live in
+[docs/windows-driver.md](docs/windows-driver.md).
 
 Artifacts (each package contains both `auroku` and `auroku-gui`):
 
@@ -298,7 +300,8 @@ auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
 
-# Windows: install / restore the WinUSB driver (needs wdi-simple.exe)
+# Windows: install / restore the WinUSB driver (release builds bundle libwdi;
+# local builds without it fall back to wdi-simple.exe)
 auroku --op install-driver --vid 04c5 --pid 1270
 auroku --op restore-driver --vid 04c5 --pid 1270
 

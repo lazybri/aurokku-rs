@@ -213,9 +213,10 @@ chmod +x .github/scripts/build-macos.sh
 本地复现 debug 构建：设置 `AUROKU_BUILD_DEBUG=1`，或给构建脚本加
 `--debug` / `-Debug`。
 
-Windows 任务还会额外把 **libwdi 编成静态库**（用 `msiexec /a` 解包 WDK redist，
-runner 上不需要管理员权限）并链接进两个二进制，因此发布版安装 WinUSB 驱动时
-不需要外部 `wdi-simple.exe`。详见 [docs/windows-driver.md](docs/windows-driver.md)。
+Windows 任务通过 orphan `libwdi-static` 分支上的可复用流水线获取 **静态 libwdi**
+（由不可变 tag `libwdi-1.5.1-x64-r1` 固定）并链接进两个二进制，因此发布版安装
+WinUSB 驱动时不需要外部 `wdi-simple.exe`。构建与 LGPL 合规细节见
+[docs/windows-driver.md](docs/windows-driver.md)。
 
 产物（每个包内均包含 `auroku` 与 `auroku-gui`）：
 
@@ -271,7 +272,7 @@ auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
 
-# Windows：安装 / 恢复 WinUSB 驱动（需要 wdi-simple.exe）
+# Windows：安装 / 恢复 WinUSB 驱动（发布版内置 libwdi；本地构建回退 wdi-simple.exe）
 auroku --op install-driver --vid 04c5 --pid 1270
 auroku --op restore-driver --vid 04c5 --pid 1270
 
