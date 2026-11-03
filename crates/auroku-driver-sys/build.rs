@@ -23,7 +23,8 @@ fn main() {
     // link-order-sensitive setups working.
     for lib in [
         "setupapi", "ole32", "ntdll", "advapi32", "user32", "gdi32", "comctl32", "crypt32",
-        "wintrust", "version", "shlwapi", "cfgmgr32", "msi",
+        "wintrust", "version", "shlwapi", "cfgmgr32", "msi", "shell32", "oleaut32", "uuid",
+        "comdlg32", "winspool", "userenv",
     ] {
         println!("cargo:rustc-link-lib=dylib={lib}");
     }
