@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+#[cfg(windows)]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -62,6 +63,7 @@ impl DriverRecord {
     }
 }
 
+#[cfg(windows)]
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
