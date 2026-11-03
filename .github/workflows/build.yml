@@ -116,7 +116,10 @@ jobs:
           Set-Content -Path $config -Value $text -NoNewline
 
           $slnDir = "$PWD\libwdi\"
-          $macros = 'WDK_DIR="' + (Join-Path $PWD 'wdk\Windows Kits\8.0') + '"'
+          # Forward slashes: MSVC would treat \a, \w and \W in the macro as
+          # escape sequences and corrupt the path.
+          $wdkDir = (Join-Path $PWD 'wdk\Windows Kits\8.0') -replace '\\', '/'
+          $macros = 'WDK_DIR="' + $wdkDir + '"'
           $common = @('/m', '/p:Configuration=Release', "/p:SolutionDir=$slnDir", "/p:BuildMacros=$macros")
 
           # detect_64build generates libwdi\build64.h which embedder includes.
