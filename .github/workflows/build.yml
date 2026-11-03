@@ -71,6 +71,12 @@ jobs:
   libwdi:
     name: Build static libwdi
     if: github.event_name != 'pull_request'
+    # The reusable workflow is statically validated against the permissions
+    # granted here. Its tag-only "release" job declares contents: write, so the
+    # call job must grant it even though that job never runs for branch pushes
+    # (it is gated on refs/tags/libwdi-*). Narrow as much as the validator allows.
+    permissions:
+      contents: write
     uses: lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@libwdi-1.5.1-x64-r1
     with:
       libwdi-sha: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
