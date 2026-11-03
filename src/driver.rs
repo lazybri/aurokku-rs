@@ -249,7 +249,7 @@ pub fn install(_vid: u16, _pid: u16, _restore_on_exit: bool) -> Result<DriverRec
 #[cfg(windows)]
 pub fn restore(vid: u16, pid: u16) -> Result<(), String> {
     restore_backend(vid, pid)?;
-    wait_until(false, vid, pid, Duration::from_secs(20))?;
+    wait_until(false, vid, pid, Duration::from_secs(30))?;
 
     if let Some(mut record) = load_record().filter(|record| record.vid == vid && record.pid == pid)
     {
@@ -314,13 +314,27 @@ fn install_backend(vid: u16, pid: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// Restore the original driver without libwdi: remove the device node so that
-/// Windows re-enumerates it and rebinds usbser.
+/// Restore the original driver without libwdi.
+///
+/// Removing the device node alone is not enough: the libwdi package stays in the
+/// driver store and PnP simply re-binds it on the next scan. Delete every
+/// package that targets this VID/PID first, then drop the node.
 #[cfg(all(windows, feature = "static-libwdi"))]
 fn restore_backend(vid: u16, pid: u16) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
     if !auroku_driver_sys::is_elevated() {
         return elevate_self(&driver_args("restore-driver", vid, pid));
     }
+
+    let packages = driver_packages(vid, pid);
+    for package in &packages {
+        let _ = std::process::Command::new("pnputil")
+            .args(["/delete-driver", package, "/uninstall", "/force"])
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+
     remove_device(vid, pid)
 }
 
@@ -374,26 +388,16 @@ fn elevate_self(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Remove the device node; Windows re-enumerates it and rebinds usbser.
+/// Remove the device node (if still present) and rescan the bus.
 #[cfg(all(windows, feature = "static-libwdi"))]
 fn remove_device(vid: u16, pid: u16) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
-    let instance = device_instance_ids(vid, pid)
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("device {vid:04X}:{pid:04X} is not present in the registry"))?;
-
-    let status = std::process::Command::new("pnputil")
-        .args(["/remove-device", &instance])
-        .creation_flags(0x0800_0000)
-        .status()
-        .map_err(|error| format!("cannot run pnputil: {error}"))?;
-    if !status.success() {
-        return Err(format!(
-            "pnputil /remove-device {instance} failed (code {:?})",
-            status.code()
-        ));
+    if let Some(instance) = device_instance_ids(vid, pid).into_iter().next() {
+        let _ = std::process::Command::new("pnputil")
+            .args(["/remove-device", &instance])
+            .creation_flags(0x0800_0000)
+            .status();
     }
 
     let _ = std::process::Command::new("pnputil")
@@ -401,6 +405,36 @@ fn remove_device(vid: u16, pid: u16) -> Result<(), String> {
         .creation_flags(0x0800_0000)
         .status();
     Ok(())
+}
+
+/// Published OEM packages (oemNN.inf) whose INF targets this VID/PID.
+///
+/// libwdi generates one package per install attempt, so multiple entries are
+/// normal; all of them have to go for the original driver to win again.
+#[cfg(all(windows, feature = "static-libwdi"))]
+fn driver_packages(vid: u16, pid: u16) -> Vec<String> {
+    let needle = format!("VID_{vid:04X}&PID_{pid:04X}").into_bytes();
+    let mut packages = Vec::new();
+
+    let Ok(entries) = std::fs::read_dir("C:\\Windows\\INF") else {
+        return packages;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if !name.starts_with("oem") || !name.ends_with(".inf") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(entry.path()) else {
+            continue;
+        };
+        if bytes
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(&needle))
+        {
+            packages.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    packages
 }
 
 /// Device instance IDs (USB\VID_....\serial) of the connected device.
@@ -470,7 +504,9 @@ fn wait_until(openable: bool, vid: u16, pid: u16, timeout: Duration) -> Result<(
         let ready = if openable {
             can_open(vid, pid)
         } else {
-            service.as_deref() != Some("WINUSB")
+            // The node disappears while PnP re-enumerates; only a real service
+            // that is no longer WINUSB counts as restored.
+            matches!(service.as_deref(), Some(name) if !name.eq_ignore_ascii_case("WINUSB"))
         };
         if ready {
             return Ok(());
@@ -485,8 +521,9 @@ fn wait_until(openable: bool, vid: u16, pid: u16, timeout: Duration) -> Result<(
                 )
             } else {
                 format!(
-                    "device {vid:04X}:{pid:04X} is still bound to WinUSB after {}s",
-                    timeout.as_secs()
+                    "device {vid:04X}:{pid:04X} did not return to its original driver within {}s                      (current service: {})",
+                    timeout.as_secs(),
+                    service.as_deref().unwrap_or("not present")
                 )
             });
         }
