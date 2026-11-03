@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use auroku::{run_task, scan_devices, AuRokkuError, DeviceConfig, DeviceSummary, LogSink, Task};
+use auroku::{
+    driver, run_task, scan_devices, AuRokkuError, DeviceConfig, DeviceSummary, LogSink, Task,
+};
 use eframe::egui;
 
 use crate::permissions::grant_selected_device;
@@ -41,6 +43,17 @@ pub enum Request {
         task: Task,
         label: String,
     },
+    /// Install the WinUSB driver for the device (Windows only).
+    InstallDriver {
+        vid: u16,
+        pid: u16,
+        restore_on_exit: bool,
+    },
+    /// Restore the original driver (Windows only).
+    RestoreDriver {
+        vid: u16,
+        pid: u16,
+    },
     Shutdown,
 }
 
@@ -64,6 +77,13 @@ pub enum Event {
     Finished {
         label: String,
         result: Result<serde_json::Value, ApiError>,
+    },
+    /// Outcome of an install/restore request.
+    Driver {
+        operation: &'static str,
+        vid: u16,
+        pid: u16,
+        result: Result<(), String>,
     },
 }
 
@@ -135,6 +155,28 @@ impl Worker {
                             let _ = thread_events.send(Event::Finished {
                                 label,
                                 result: outcome,
+                            });
+                        }
+                        Request::InstallDriver {
+                            vid,
+                            pid,
+                            restore_on_exit,
+                        } => {
+                            let result = driver::install(vid, pid, restore_on_exit).map(|_| ());
+                            let _ = thread_events.send(Event::Driver {
+                                operation: "install",
+                                vid,
+                                pid,
+                                result,
+                            });
+                        }
+                        Request::RestoreDriver { vid, pid } => {
+                            let result = driver::restore(vid, pid);
+                            let _ = thread_events.send(Event::Driver {
+                                operation: "restore",
+                                vid,
+                                pid,
+                                result,
                             });
                         }
                         Request::Shutdown => break,

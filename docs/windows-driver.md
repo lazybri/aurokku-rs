@@ -1,0 +1,191 @@
+# Windows USB 驱动说明
+
+本文说明 auRokku 在 Windows 上为什么需要 WinUSB 驱动、如何安装,以及为什么
+“直接用 COM 口”这条路走不通。
+
+## 1. 现象
+
+设备(以 `04C5:1270` 为例)插入 Windows 后,设备管理器出现“USB 串行设备 (COMx)”,
+属性事件显示“已添加驱动程序服务 (usbser) / 需要进一步安装”;此时:
+
+- `auroku --op probe --vid 04C5 --pid 1270` 能列出描述符(纯枚举,不需要驱动);
+- `auroku --op probe --vid 04C5 --pid 1270 --probe-kind seri` 报
+  `USB error: Operation not supported`;
+- 用串口助手或 .NET `SerialPort.Open("COM3")` 打不开该 COM 口,报 `0x8007001F`
+  (设备未正常工作)。
+
+## 2. 设备实际拓扑
+
+| 接口 | 类/子类/协议 | 端点 | 用途 |
+| --- | --- | --- | --- |
+| 0 | `02/02/01` | 中断 `0x82` | CDC 通信接口 |
+| 1 | `0A/00/00` | Bulk `0x03` / `0x83` | CDC 数据接口(被 usbser 用) |
+| 2 | `02/0A/01` | Bulk `0x04` / `0x84` | SERI 协议口(auRokku 实际使用) |
+
+设备级 `bDeviceClass = 0x02`,所以 Windows 的兼容 ID 是
+`USB\Class_02&SubClass_02&Prot_01`,由 usbser.sys **一个函数驱动占住整机**,
+不会生成 `&MI_00/&MI_01/&MI_02` 子节点。
+
+由此得到两个结论:
+
+1. 接口 2(SERI)没有任何 inbox 驱动,Windows 无法对它单独绑定 WinUSB;
+2. 装 WinUSB 只能针对整机,装完 COM 口必然消失——但它本来也打不开,没有损失。
+
+## 3. 安装 WinUSB
+
+### 方式 A:程序内一键安装(发布版内置 libwdi,推荐)
+
+发布版的 `auroku.exe` / `auroku-gui.exe` 在 CI 中**静态链接了 libwdi**,所以:
+
+- GUI:操作因驱动失败时,「最近结果」卡片显示原因,并给出 **安装 WinUSB 驱动** /
+  **恢复原驱动** 两个按钮,以及「退出时自动恢复原驱动」复选框(默认关闭);
+- 点击后只弹**一次**标准 UAC 对话框(标题是本程序),没有控制台窗口、没有额外 exe;
+- 安装成功后自动重试刚才失败的操作;
+- 恢复时用 `pnputil /remove-device` 移除设备节点,Windows 重新枚举后自动绑回 usbser。
+
+UAC 的处理刻意做成对小白最省事的形式:
+
+1. 先在本进程内调用 `wdi_install_driver`;**只有** libwdi 返回
+   `WDI_ERROR_NEEDS_ADMIN` 才提权——如果用户本来就在管理员终端里,完全不会弹窗;
+2. 提权通过 `Start-Process -Verb RunAs` 启动**本程序自己**
+   (`auroku.exe --op install-driver --vid ... --pid ...`),不是第三方工具,因此
+   UAC 上显示的是 auRokku;
+3. 取消 UAC 只会得到一条“elevated helper exited with code ...”错误,不会留下半装状态。
+
+CLI(与 GUI 按钮完全等价):
+
+```bat
+auroku --op install-driver --vid 04C5 --pid 1270
+auroku --op install-driver --vid 04C5 --pid 1270 --restore-on-exit
+auroku --op restore-driver --vid 04C5 --pid 1270
+```
+
+源码构建且没有 libwdi 时(未启用 `static-libwdi` 特性),程序会回退到外部
+`wdi-simple.exe`:查找顺序为 `AUROKU_WDI_SIMPLE` → 程序目录 → 程序目录下的
+`tools` → 当前目录下的 `tools` → `PATH`;找不到时明确报错并说明放置位置。
+
+CLI 的 `--restore-on-exit` 不会让一次性进程立刻卸载,它只把“退出时恢复”的意图
+写进状态文件,由之后退出的 GUI 或手动 `--op restore-driver` 完成。
+
+CLI 的 `--restore-on-exit` 不会让一次性进程立刻卸载,它只把“退出时恢复”的意图
+写进状态文件,由之后退出的 GUI 或手动 `--op restore-driver` 完成。
+
+安装结果记录在 `%LOCALAPPDATA%\auroku\driver-state.json`(可用
+`AUROKU_STATE_DIR` 覆盖)。如果勾了「退出时恢复」但进程被强杀,下次启动会打印
+警告并给出恢复命令——这是崩溃兜底。
+
+### 方式 B:Zadig(手动,最快)
+
+1. 以管理员身份运行 Zadig;
+2. `Options` -> 勾选 `List All Devices`;
+3. 下拉框里只有**整机**条目(如 `USB 串行设备 (COM3)`),不要期待出现
+   `Interface x`;
+4. 目标驱动选 `WinUSB`,点 `Replace Driver`;
+5. 成功后设备管理器里设备名变为 `WinUSB device`,COM 口消失,这是预期行为。
+
+### 方式 C:wdi-simple(手工执行,便于排查)
+
+`wdi-simple.exe` 是 libwdi 的命令行工具(Zadig 的同一套内核),程序内的一键安装
+就是调用它。手工执行便于排查:
+
+```bat
+wdi-simple.exe --vid 0x04c5 --pid 0x1270 --type 0 --name "auRokku USB"
+:: --type 0 = WinUSB;参数以 wdi-simple --help 为准
+:: 卸载:wdi-simple.exe --vid 0x04c5 --pid 0x1270 --type 0 --uninstall
+```
+
+安装需要一次管理员提权(UAC),会生成并信任一张自签名证书——与 Zadig 的行为
+一致。
+
+### 方式 D:签名 INF(正式发布)
+
+INF 必须匹配**整机**硬件 ID(不能带 `&MI_`),并写入 `DeviceInterfaceGUIDs`,
+否则 WinUSB 不会创建设备接口,libusb 依然找不到设备:
+
+```ini
+[Version]
+Signature="$Windows NT$"
+Class=USBDevice
+ClassGuid={88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider=%MFG%
+CatalogFile=auroku.cat
+DriverVer=11/04/2026,1.0.0.0
+
+[Manufacturer]
+%MFG%=Devices,NTamd64,NTarm64
+
+[Devices.NTamd64]
+%DEVNAME%=WINUSB_Install, USB\VID_04C5&PID_1270
+[Devices.NTarm64]
+%DEVNAME%=WINUSB_Install, USB\VID_04C5&PID_1270
+
+[WINUSB_Install]
+Include=winusb.inf
+Needs=WINUSB.NT
+
+[WINUSB_Install.Services]
+Include=winusb.inf
+Needs=WINUSB.NT.Services
+
+[WINUSB_Install.HW]
+AddReg=WINUSB_AddReg
+[WINUSB_AddReg]
+HKR,,DeviceInterfaceGUIDs,0x10000,"{6F1D2B60-D5A0-4A5B-9A3C-7C3B2E5D9A11}"
+```
+
+安装:
+
+```bat
+pnputil /add-driver auroku.inf /install
+```
+
+硬件 ID 匹配的优先级高于 usbser 使用的兼容 ID,因此可以顶掉 usbser。注意
+Windows 10/11 x64 要求驱动包带有效签名(微软 attestation 或自签名证书导入
+受信任根),否则 `pnputil` 会拒绝安装。
+
+## 4. 验证
+
+```bat
+:: 1) 驱动是否换成 WinUSB(应输出 WINUSB 而不是 usbser)
+reg query "HKLM\SYSTEM\CurrentControlSet\Enum\USB\VID_04C5&PID_1270" /s /v Service
+
+:: 2) SERI 是否可通:期望回显 1c 05
+auroku --op probe --vid 04C5 --pid 1270 --probe-kind seri --verbose
+
+:: 3) 完整状态
+auroku --op status --vid 04C5 --pid 1270
+```
+
+## 5. 恢复原来的 COM 口
+
+设备管理器 -> 右键设备 -> 卸载设备 -> 勾选“删除驱动程序” -> 扫描硬件改动。
+设备会重新以“USB 串行设备 (COMx)”出现(仍然打不开,属设备本身 CDC 功能的问题)。
+
+## 6. 常见问题
+
+- **列表里找不到设备?** 确认 `Options -> List All Devices` 已勾选,并换一个
+  USB 口/线;部分 hub 会让设备重新枚举。
+- **装完 WinUSB 后工具仍报 not found?** 确认 VID/PID 与设备一致,并确认没有
+  同时运行占用设备的其他工具。
+- **能否既保留 COM 口又用 WinUSB?** 该设备是单一 CDC 功能(设备级 class 02),
+  不行;需要固件把 SERI 接口声明成带 IAD 的独立功能,或提供 WCID 描述符。
+
+## 7. 构建(只在 CI)
+
+Windows 发布包里的 libwdi 是在 GitHub Actions 中编译的静态库,仓库不再提供本地
+构建入口。workflow 做这几步:
+
+1. 下载 WDK redist MSI(约 31 MB)并用 `msiexec /a` **解包**(不安装,不需要管理员);
+2. `git clone --depth 1 --branch v1.5.1` libwdi;
+3. `msbuild libwdi_static.vcxproj /p:Configuration=Release /p:Platform=x64`,
+   通过 `BuildMacros=WDK_DIR="...\wdk\Windows Kits\8.0"` 指定 WinUSB 载荷;
+4. 导出 `LIBWDI_LIB_DIR=<repo>\libwdi\x64\Release\lib`;
+5. `.github/scripts/build-windows.ps1` 检测到该变量后自动加
+   `--features gui,static-libwdi` 编译并打包。
+
+本地没有 WDK 也能正常 `cargo build`:特性默认关闭,驱动安装回退到外部
+`wdi-simple.exe`。
+
+**许可证**:libwdi 是 LGPLv3。静态链接的发布包会附带
+`LICENSE-LGPL-3.0.txt`,并且源码与构建脚本随仓库公开,满足“可重新链接”
+要求。若你要分发修改过的 libwdi,请同步替换该库并重新构建。

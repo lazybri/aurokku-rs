@@ -21,6 +21,8 @@ use md5::{Digest, Md5};
 use rusb::{ConfigDescriptor, Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
 use serde_json::{json, Value};
 
+pub mod driver;
+
 /// Default control transfer timeout used by the protocol layer.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Default USB OUT endpoint (address 0x04).
@@ -44,6 +46,9 @@ pub enum AuRokkuError {
     Runtime(String),
     /// Mirrors Python's `TimeoutError`.
     Timeout(String),
+    /// The device is enumerated but cannot be opened until another driver is
+    /// bound to it (Windows: usually `usbser.sys` instead of WinUSB).
+    Driver(String),
 }
 
 impl AuRokkuError {
@@ -53,6 +58,7 @@ impl AuRokkuError {
             AuRokkuError::Value(_) => "ValueError",
             AuRokkuError::Runtime(_) => "RuntimeError",
             AuRokkuError::Timeout(_) => "TimeoutError",
+            AuRokkuError::Driver(_) => "DriverError",
         }
     }
 }
@@ -60,14 +66,42 @@ impl AuRokkuError {
 impl fmt::Display for AuRokkuError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AuRokkuError::Value(msg) | AuRokkuError::Runtime(msg) | AuRokkuError::Timeout(msg) => {
-                f.write_str(msg)
-            }
+            AuRokkuError::Value(msg)
+            | AuRokkuError::Runtime(msg)
+            | AuRokkuError::Timeout(msg)
+            | AuRokkuError::Driver(msg) => f.write_str(msg),
         }
     }
 }
 
 impl std::error::Error for AuRokkuError {}
+
+/// Map a libusb open failure to an actionable message.
+///
+/// On Windows a device bound to a non-WinUSB function driver (for example
+/// usbser.sys, which exposes a CDC-ACM port) still enumerates, but libusb can
+/// never open it. Explain that instead of surfacing a bare "Operation not
+/// supported".
+fn open_failure(err: rusb::Error, vid: u16, pid: u16) -> AuRokkuError {
+    if cfg!(windows) && matches!(err, rusb::Error::NotSupported | rusb::Error::Access) {
+        let mut message = format!("USB error: {err}\n");
+        message.push_str(&format!(
+            "[Windows] {vid:04X}:{pid:04X} is enumerated but is not bound to WinUSB; it is \
+             most likely owned by usbser.sys (shown as \"USB Serial Device\" / COMx).\n"
+        ));
+        message.push_str(&format!(
+            "Install the WinUSB driver, then retry:\n  auroku --op install-driver --vid {vid:04X} \
+             --pid {pid:04X}\n"
+        ));
+        message.push_str(
+            "Or use Zadig: Options -> List All Devices -> WinUSB -> Replace Driver. \
+             See docs/windows-driver.md; the original driver can be restored with \
+             --op restore-driver.",
+        );
+        return AuRokkuError::Driver(message);
+    }
+    AuRokkuError::Runtime(format!("USB error: {err}"))
+}
 
 impl From<rusb::Error> for AuRokkuError {
     fn from(err: rusb::Error) -> Self {
@@ -604,7 +638,7 @@ impl AuRokkuDevice {
                 .ok_or_else(|| AuRokkuError::Runtime("USB device is not open".to_string()))?;
             let handle = device
                 .open()
-                .map_err(|e| AuRokkuError::Runtime(format!("USB error: {e}")))?;
+                .map_err(|e| open_failure(e, self.vid, self.pid))?;
             self.handle = Some(handle);
         }
         Ok(())
@@ -2061,6 +2095,12 @@ enum Op {
     Exituimlk,
     #[value(name = "exit")]
     Exit,
+    /// Install the WinUSB driver for the device (Windows only)
+    #[value(name = "install-driver")]
+    InstallDriver,
+    /// Restore the original driver (Windows only)
+    #[value(name = "restore-driver")]
+    RestoreDriver,
 }
 
 impl Op {
@@ -2078,6 +2118,8 @@ impl Op {
             Op::Probe => "probe",
             Op::Exituimlk => "exituimlk",
             Op::Exit => "exit",
+            Op::InstallDriver => "install-driver",
+            Op::RestoreDriver => "restore-driver",
         }
     }
 }
@@ -2148,6 +2190,10 @@ struct Cli {
     /// Output JSON
     #[arg(long)]
     json: bool,
+
+    /// With --op install-driver: restore the original driver when the process exits
+    #[arg(long = "restore-on-exit")]
+    restore_on_exit: bool,
 }
 
 fn py_bool(value: bool) -> &'static str {
@@ -2405,6 +2451,33 @@ fn print_human_report(op: &str, result: &Value) {
         "exituimlk" | "exit" => {
             println!("  Method        : {}", str_field(result, "method"));
         }
+        "install-driver" => {
+            println!(
+                "  Driver        : WinUSB installed for {}:{}",
+                str_field(result, "vid"),
+                str_field(result, "pid")
+            );
+            println!("  State file    : {}", str_field(result, "state_file"));
+            println!(
+                "  Restore       : {}",
+                if result
+                    .get("restore_on_exit")
+                    .map(is_truthy)
+                    .unwrap_or(false)
+                {
+                    "on exit"
+                } else {
+                    "manual (--op restore-driver)"
+                }
+            );
+        }
+        "restore-driver" => {
+            println!(
+                "  Driver        : original driver restored for {}:{}",
+                str_field(result, "vid"),
+                str_field(result, "pid")
+            );
+        }
         _ => {}
     }
 
@@ -2462,6 +2535,10 @@ Examples:
 
   # Exit maintenance / UIM service:
   auroku --op exit --vid 0482 --pid 0a5c
+
+  # Windows: install / restore the WinUSB driver (requires wdi-simple.exe)
+  auroku --op install-driver --vid 04C5 --pid 1270
+  auroku --op restore-driver --vid 04C5 --pid 1270
 ";
 
 fn task_from_cli(cli: &Cli) -> Task {
@@ -2488,6 +2565,63 @@ fn task_from_cli(cli: &Cli) -> Task {
         },
         Op::Exituimlk => Task::Exituimlk,
         Op::Exit => Task::Exit,
+        Op::InstallDriver | Op::RestoreDriver => {
+            unreachable!("driver operations are handled before task dispatch")
+        }
+    }
+}
+
+/// Run `--op install-driver` / `--op restore-driver` and return the exit code.
+fn run_driver_op(cli: &Cli) -> i32 {
+    let outcome: Result<Value, String> = match cli.op {
+        Op::InstallDriver => driver::install(cli.vid, cli.pid, cli.restore_on_exit).map(|record| {
+            json!({
+                "operation": "install-driver",
+                "success": true,
+                "vid": format!("0x{:04x}", record.vid),
+                "pid": format!("0x{:04x}", record.pid),
+                "restore_on_exit": record.restore_on_exit,
+                "state_file": driver::state_path().display().to_string(),
+            })
+        }),
+        Op::RestoreDriver => driver::restore(cli.vid, cli.pid).map(|()| {
+            json!({
+                "operation": "restore-driver",
+                "success": true,
+                "vid": format!("0x{:04x}", cli.vid),
+                "pid": format!("0x{:04x}", cli.pid),
+            })
+        }),
+        _ => unreachable!("only driver operations reach this helper"),
+    };
+
+    match outcome {
+        Ok(result) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_default()
+                );
+            } else {
+                print_human_report(cli.op.as_str(), &result);
+            }
+            0
+        }
+        Err(message) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "error": "DriverError",
+                        "message": message,
+                    }))
+                    .unwrap_or_default()
+                );
+            } else {
+                eprintln!("Error (DriverError): {message}");
+            }
+            1
+        }
     }
 }
 
@@ -2497,6 +2631,18 @@ fn task_from_cli(cli: &Cli) -> Task {
 /// the original Python tool.
 pub fn cli_main() {
     let cli = Cli::parse();
+
+    if let Some(record) = driver::pending_restore() {
+        eprintln!(
+            "[WARN] A previous session installed the WinUSB driver for {:04X}:{:04X} and did \
+             not restore it. Run: auroku --op restore-driver --vid {:04X} --pid {:04X}",
+            record.vid, record.pid, record.vid, record.pid
+        );
+    }
+
+    if matches!(cli.op, Op::InstallDriver | Op::RestoreDriver) {
+        std::process::exit(run_driver_op(&cli));
+    }
 
     if cli.op == Op::Writelk && cli.val.is_none() {
         eprintln!("Error: --op writelk requires --val <8_hex_chars> (e.g. --val 80e48ed2)");

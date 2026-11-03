@@ -191,6 +191,14 @@ pub struct AurokuApp {
     last_op: Option<String>,
     last_success: Option<bool>,
     last_error: Option<ApiError>,
+    /// Device that needs a WinUSB driver (Windows): drives the action card.
+    driver_offer: Option<(u16, u16)>,
+    /// Task retried automatically after a successful driver installation.
+    retry_after_driver: Option<(Task, String)>,
+    /// Whether the original driver should be restored when the GUI exits.
+    restore_driver_on_exit: bool,
+    /// VID/PID the most recent task was started for.
+    last_target: Option<(u16, u16)>,
 
     // Operation parameters
     writelk_value: String,
@@ -262,6 +270,10 @@ impl AurokuApp {
             last_op: None,
             last_success: None,
             last_error: None,
+            driver_offer: None,
+            retry_after_driver: None,
+            restore_driver_on_exit: false,
+            last_target: None,
             writelk_value: "80e48ed2".to_owned(),
             writelk_control: true,
             maint_control: true,
@@ -276,6 +288,14 @@ impl AurokuApp {
             show_about: false,
         };
         app.log(i18n::t("界面已启动，正在扫描 USB 总线").to_owned());
+        if let Some(record) = auroku::driver::pending_restore() {
+            let target = format!("{:04X}:{:04X}", record.vid, record.pid);
+            app.driver_offer = Some((record.vid, record.pid));
+            app.log(i18n::tf(
+                "上次会话未恢复 {target} 的原始 USB 驱动，可在“最近结果”卡片中恢复",
+                &[("target", &target)],
+            ));
+        }
         app
     }
 
@@ -430,7 +450,52 @@ impl AurokuApp {
                                 ),
                                 Tone::Error,
                             );
+                            if error.kind == "DriverError" {
+                                self.driver_offer = self.last_target;
+                            }
                             self.last_error = Some(error);
+                        }
+                    }
+                }
+                Event::Driver {
+                    operation,
+                    vid,
+                    pid,
+                    result,
+                } => {
+                    self.busy = false;
+                    self.busy_label.clear();
+                    let target = format!("{vid:04X}:{pid:04X}");
+                    match result {
+                        Ok(()) => {
+                            self.driver_offer = None;
+                            self.last_error = None;
+                            if operation == "install" {
+                                self.log(i18n::tf(
+                                    "已为 {target} 安装 WinUSB 驱动",
+                                    &[("target", &target)],
+                                ));
+                                self.notify(i18n::t("WinUSB 驱动已安装，正在重试…"), Tone::Success);
+                                if let Some((task, label)) = self.retry_after_driver.take() {
+                                    self.start(task, &label);
+                                }
+                            } else {
+                                self.log(i18n::tf(
+                                    "已为 {target} 恢复原始 USB 驱动",
+                                    &[("target", &target)],
+                                ));
+                                self.notify(i18n::t("已恢复原始 USB 驱动"), Tone::Primary);
+                            }
+                        }
+                        Err(message) => {
+                            self.log(i18n::tf(
+                                "驱动操作失败：{message}",
+                                &[("message", &message)],
+                            ));
+                            self.notify(
+                                i18n::tf("驱动操作失败：{message}", &[("message", &message)]),
+                                Tone::Error,
+                            );
                         }
                     }
                 }
@@ -558,6 +623,8 @@ impl AurokuApp {
             }
         };
         let label = i18n::t(label).to_owned();
+        self.last_target = Some((config.vid, config.pid));
+        self.retry_after_driver = Some((task.clone(), label.clone()));
         self.busy = true;
         self.busy_label = label.clone();
         self.log(format!("▶ {label}"));
@@ -566,6 +633,30 @@ impl AurokuApp {
             task,
             label,
         });
+    }
+
+    fn install_driver(&mut self, vid: u16, pid: u16) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        self.busy_label = i18n::t("正在安装 WinUSB 驱动…").to_owned();
+        self.log(i18n::t("正在安装 WinUSB 驱动（需要管理员确认）…").to_owned());
+        self.worker.send(Request::InstallDriver {
+            vid,
+            pid,
+            restore_on_exit: self.restore_driver_on_exit,
+        });
+    }
+
+    fn restore_driver(&mut self, vid: u16, pid: u16) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        self.busy_label = i18n::t("正在恢复原始驱动…").to_owned();
+        self.log(i18n::t("正在恢复原始驱动（需要管理员确认）…").to_owned());
+        self.worker.send(Request::RestoreDriver { vid, pid });
     }
 
     fn confirm_write(&mut self) {
@@ -1204,11 +1295,64 @@ impl AurokuApp {
                     "运行一次状态读取或探测后，结果会显示在这里",
                 );
             }
+            self.driver_actions(ui, &s);
         });
 
         if open_json {
             self.screen = Screen::Console;
         }
+    }
+
+    /// Action row shown when the device needs a WinUSB driver (Windows).
+    fn driver_actions(&mut self, ui: &mut Ui, s: &M3Colors) {
+        if !cfg!(windows) {
+            return;
+        }
+        let Some((vid, pid)) = self.driver_offer else {
+            return;
+        };
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(i18n::t(
+                "该设备当前由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。",
+            ))
+            .size(12.5)
+            .color(s.on_surface_variant),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if button(
+                ui,
+                s,
+                Some(Icon::Usb),
+                i18n::t("安装 WinUSB 驱动"),
+                ButtonKind::Filled,
+                !self.busy,
+                0.0,
+            )
+            .clicked()
+            {
+                self.install_driver(vid, pid);
+            }
+            if button(
+                ui,
+                s,
+                Some(Icon::Refresh),
+                i18n::t("恢复原驱动"),
+                ButtonKind::Outlined,
+                !self.busy,
+                0.0,
+            )
+            .clicked()
+            {
+                self.restore_driver(vid, pid);
+            }
+        });
+        ui.add_space(4.0);
+        ui.checkbox(
+            &mut self.restore_driver_on_exit,
+            i18n::t("退出时自动恢复原驱动"),
+        );
     }
 
     fn status_summary(&self, ui: &mut Ui, result: &Value) {
@@ -2638,6 +2782,16 @@ impl eframe::App for AurokuApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.worker.shutdown_and_wait();
         self.poll_events();
+        // Crash-safe restore: only when the user opted in at install time.
+        if let Some(record) = auroku::driver::pending_restore() {
+            eprintln!(
+                "[auroku-gui] restoring the original driver for {:04X}:{:04X}",
+                record.vid, record.pid
+            );
+            if let Err(error) = auroku::driver::restore(record.vid, record.pid) {
+                eprintln!("[auroku-gui] driver restore failed: {error}");
+            }
+        }
         if let Err(error) = permissions::revoke_granted_devices(&self.granted_devices) {
             eprintln!("[auroku-gui] Failed to revoke USB ACLs on exit: {error}");
         }

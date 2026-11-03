@@ -1,0 +1,12 @@
+[package]
+name = "auroku-driver-sys"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Static libwdi bindings used by the auRokku Windows driver installer"
+license = "MIT"
+publish = false
+
+[lib]
+name = "auroku_driver_sys"
+path = "src/lib.rs"

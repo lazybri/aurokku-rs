@@ -115,6 +115,32 @@ pub fn t(text: &str) -> &str {
         "关闭" => "Close",
 
         // ------------------------------------------------------------------
+        // Windows WinUSB driver
+        // ------------------------------------------------------------------
+        "安装 WinUSB 驱动" => "Install WinUSB driver",
+        "恢复原驱动" => "Restore original driver",
+        "退出时自动恢复原驱动" => "Restore the original driver on exit",
+        "该设备当前由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。" => {
+            "This device is owned by usbser.sys; libusb needs the WinUSB driver to access it. Installing asks for UAC confirmation once."
+        }
+        "正在安装 WinUSB 驱动…" => "Installing the WinUSB driver…",
+        "正在安装 WinUSB 驱动（需要管理员确认）…" => {
+            "Installing the WinUSB driver (administrator confirmation required)…"
+        }
+        "正在恢复原始驱动…" => "Restoring the original driver…",
+        "正在恢复原始驱动（需要管理员确认）…" => {
+            "Restoring the original driver (administrator confirmation required)…"
+        }
+        "已为 {target} 安装 WinUSB 驱动" => "Installed the WinUSB driver for {target}",
+        "WinUSB 驱动已安装，正在重试…" => "WinUSB driver installed; retrying…",
+        "已为 {target} 恢复原始 USB 驱动" => "Restored the original USB driver for {target}",
+        "已恢复原始 USB 驱动" => "Restored the original USB driver",
+        "驱动操作失败：{message}" => "Driver operation failed: {message}",
+        "上次会话未恢复 {target} 的原始 USB 驱动，可在“最近结果”卡片中恢复" => {
+            "The previous session did not restore the original USB driver for {target}; you can restore it from the result card."
+        }
+
+        // ------------------------------------------------------------------
         // Overview
         // ------------------------------------------------------------------
         "连接 au / SERI 设备，读取锁状态、PIN 与 SIM 信息" => {

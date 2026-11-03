@@ -91,21 +91,47 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build & package (Windows, static CRT)
+      - uses: microsoft/setup-msbuild@v2
+        if: matrix.name == 'windows-x86_64'
+
+      # libwdi is built as a static library here so the release binaries can
+      # install the WinUSB driver in-process (no wdi-simple.exe to ship).
+      # The WDK redist MSI is only extracted (/a), not installed, so no admin
+      # rights are needed on the runner.
+      - name: Build static libwdi (WinUSB payload only)
         if: matrix.name == 'windows-x86_64'
         shell: pwsh
-        run: ./build-windows.ps1 -Target ${{ matrix.rust_targets }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          curl.exe -sSL "https://go.microsoft.com/fwlink/p/?LinkID=253170" -o wdk-redist.msi
+          Start-Process msiexec.exe -Wait -ArgumentList '/a','wdk-redist.msi','/qn',"TARGETDIR=$PWD\wdk"
+          git clone --depth 1 --branch v1.5.1 https://github.com/pbatard/libwdi.git
+          $macros = 'WDK_DIR="' + (Join-Path $PWD 'wdk\Windows Kits\8.0') + '"'
+          # embedder.exe produces embedded.h and is invoked from libwdi\ by the
+          # static project's pre-build event, so build it first.
+          msbuild "libwdi\libwdi\.msvc\embedder.vcxproj" /m `
+            /p:Configuration=Release /p:Platform=x64
+          msbuild "libwdi\libwdi\.msvc\libwdi_static.vcxproj" /m `
+            /p:Configuration=Release /p:Platform=x64 `
+            "/p:BuildMacros=$macros" "/p:SolutionDir=$PWD\libwdi\"
+          if (-not (Test-Path "libwdi\x64\Release\lib\libwdi.lib")) { throw 'libwdi.lib was not produced' }
+          "LIBWDI_LIB_DIR=$PWD\libwdi\x64\Release\lib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build & package (Windows, static CRT + static libwdi)
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: ./.github/scripts/build-windows.ps1 -Target ${{ matrix.rust_targets }}
 
       - name: Build (Linux musl, fully static)
         if: matrix.name == 'linux-x86_64'
         run: |
-          chmod +x build-linux.sh
-          ./build-linux.sh
+          chmod +x .github/scripts/build-linux.sh
+          ./.github/scripts/build-linux.sh
 
       - name: Build & package (macOS universal)
         if: matrix.name == 'macos-universal'
         run: |
-          bash build-macos.sh
+          bash .github/scripts/build-macos.sh
           mkdir -p dist/macos-universal
           cp dist/auroku dist/auroku-gui dist/macos-universal/
           ditto -c -k --keepParent dist/macos-universal auroku-macos-universal.zip

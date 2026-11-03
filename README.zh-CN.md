@@ -49,7 +49,7 @@ PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
 平台说明：
 
 - **Linux**：eframe 同时启用 Wayland 与 X11；Wayland `app_id` 为 `auroku`，
-  X11 / Wayland 客户端库在运行时通过 `dlopen` 加载。`build-linux.sh` 会在一次
+  X11 / Wayland 客户端库在运行时通过 `dlopen` 加载。`.github/scripts/build-linux.sh` 会在一次
   运行中同时产出静态 musl CLI 与宿主机 glibc GUI
   （`dist/auroku-linux-x86_64` 与 `dist/auroku-gui-linux-x86_64`）。静态 musl
   不支持 `dlopen`，GUI 静态产物无法启动；`PKG_CONFIG=/bin/false` 可避免 GUI
@@ -60,7 +60,9 @@ PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
 - **字体**：启动时自动查找系统 CJK 字体（Noto Sans CJK / 微软雅黑 / 苹方等）。
   可通过环境变量 `AUROKU_GUI_FONT=/path/to/font.ttf` 指定字体文件。
 - **权限**：Linux GUI 始终以普通用户运行；选择设备后才会请求该设备的 USB
-  权限。Windows 可能需要安装 libusb 驱动（与 CLI 相同）。
+  权限。Windows 上设备默认被 `usbser.sys` 占用（显示为“USB 串行设备 / COMx”），
+  libusb 无法直接打开，需要安装 WinUSB 驱动，详见
+  [docs/windows-driver.md](docs/windows-driver.md)（Zadig / wdi-simple / 签名 INF）。
 
 ### Linux USB 权限
 
@@ -84,16 +86,17 @@ CLI 的全部 `--op` 操作，并在控制台页面显示 USB TX / RX 日志和�
 因此还需要一个 C 编译器（Linux/macOS 的 `gcc`/`clang`，Windows 的 MSVC
 Build Tools 或 MinGW-w64）。
 
-各平台提供本地编译脚本，产物统一放到 `dist/`。**Linux、Windows、macOS 三个
-原生脚本都会同时构建 CLI 与 GUI**。这里的“静态”指 Rust/C 运行时依赖；系统库
-与图形栈是否可静态链接由操作系统决定：
+构建**只在 GitHub Actions 中进行**：仓库不再提供本地构建入口，发布、校验与
+打包全部由 workflow 完成。`.github/scripts/` 下的脚本仅由 CI 调用，产物统一
+放到 `dist/`。这里的“静态”指 Rust/C 运行时依赖；系统库与图形栈是否可静态链接
+由操作系统决定：
 
-| 平台 | 命令 | 产物 |
+| 平台 | CI 构建 | 产物 |
 | --- | --- | --- |
-| Linux（静态 CLI + 宿主机 glibc GUI） | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64`（静态 ELF）、`dist/auroku-gui-linux-x86_64`（glibc） |
-| Windows（静态 CRT） | `.\build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-gui.exe`、`dist\auroku-windows-<arch>.zip` |
-| macOS（通用二进制） | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku`、`dist/auroku-gui`（arm64 + x86_64） |
-| macOS（仅本机架构） | `./build-macos.sh --native` | `dist/auroku`、`dist/auroku-gui` |
+| Linux（静态 CLI + 宿主机 glibc GUI） | `.github/scripts/build-linux.sh` | `dist/auroku-linux-x86_64`（静态 ELF）、`dist/auroku-gui-linux-x86_64`（glibc） |
+| Windows（静态 CRT + 内置 libwdi） | `.github/scripts/build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-gui.exe`、`dist\auroku-windows-<arch>.zip` |
+| macOS（通用二进制） | `.github/scripts/build-macos.sh` | `dist/auroku`、`dist/auroku-gui`（arm64 + x86_64） |
+| macOS（仅本机架构） | `.github/scripts/build-macos.sh --native` | `dist/auroku`、`dist/auroku-gui` |
 
 静态链接结论：
 
@@ -110,6 +113,11 @@ Linux GUI 依赖 winit/glutin 在运行时通过 `dlopen` 加载 Wayland/X11/Ope
 `Dynamic loading not supported` / `NoWaylandLib` 失败，因此 GUI 请使用宿主机
 glibc 目标构建，不要使用 musl 静态目标。
 
+Windows 任务还会用 `dumpbin /dependents` 检查两个 exe 的导入表：一旦出现
+`vcruntime140*.dll`、`msvcp140*.dll`、`ucrtbase.dll`、`api-ms-win-crt-*.dll`、
+`libgcc_s_*.dll` 这类动态 CRT，构建直接失败。只允许出现操作系统 DLL，
+这样“静态 CRT”不会悄悄退化。
+
 ### 静态链接验证
 
 Linux CLI 静态产物可用以下命令复核（本项目 x86_64 环境已实测通过）：
@@ -122,7 +130,7 @@ readelf -l dist/auroku-linux-x86_64 | grep INTERP   # 无输出
 ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
-`build-linux.sh` 在构建结束后会自动执行上述静态性检查，失败时直接退出。
+`.github/scripts/build-linux.sh` 在构建结束后会自动执行上述静态性检查，失败时直接退出。
 
 Linux 构建需要 `musl-gcc` 与内核 UAPI 头文件：
 
@@ -149,7 +157,7 @@ C_INCLUDE_PATH=/usr/include:/usr/include/x86_64-linux-gnu \
 ```
 
 产物：`target/x86_64-unknown-linux-musl/release/auroku`（静态 ELF）。推荐直接
-使用 `build-linux.sh`，它会准备 UAPI 头文件并自动校验静态性。
+使用 `.github/scripts/build-linux.sh`，它会准备 UAPI 头文件并自动校验静态性。
 
 ### 交叉编译 Linux（x86_64 静态 musl）
 
@@ -158,7 +166,7 @@ Windows 上可用 Zig 交叉编译，无需 WSL / Docker：
 ```powershell
 # 一次性准备：安装 Zig，解压到 %USERPROFILE%\tools\zig-<版本>，
 # 或者设置 ZIG 环境变量 / 用 -ZigPath 指定 zig.exe
-.\windows-cross-build-linux.ps1
+.\.github/scripts/windows-cross-build-linux.ps1
 ```
 
 产物：`target\x86_64-unknown-linux-musl\release\auroku`
@@ -173,7 +181,7 @@ Windows 上可用 Zig 交叉编译，无需 WSL / Docker：
 需要在 macOS 上执行（安装 Xcode Command Line Tools）：
 
 ```bash
-chmod +x build-macos.sh
+chmod +x .github/scripts/build-macos.sh
 ./build-macos.sh
 ```
 
@@ -201,9 +209,13 @@ chmod +x build-macos.sh
   GitHub Release 并上传全部产物。
 - **推送 `v*` 标签**：同样在一次运行内完成测试、构建与发布。
 
+Windows 任务还会额外把 **libwdi 编成静态库**（用 `msiexec /a` 解包 WDK redist，
+runner 上不需要管理员权限）并链接进两个二进制，因此发布版安装 WinUSB 驱动时
+不需要外部 `wdi-simple.exe`。详见 [docs/windows-driver.md](docs/windows-driver.md)。
+
 产物（每个包内均包含 `auroku` 与 `auroku-gui`）：
 
-- `auroku-windows-x86_64.zip`
+- `auroku-windows-x86_64.zip`（另附 `LICENSE-LGPL-3.0.txt`）
 - `auroku-linux-x86_64.tar.gz`（musl 静态 CLI + 宿主机 glibc GUI）
 - `auroku-macos-universal.zip`（arm64 + x86_64）
 
@@ -251,6 +263,10 @@ auroku --op maintenance_bit --vid 0482 --pid 0a5c --control 1
 auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
+
+# Windows：安装 / 恢复 WinUSB 驱动（需要 wdi-simple.exe）
+auroku --op install-driver --vid 04c5 --pid 1270
+auroku --op restore-driver --vid 04c5 --pid 1270
 
 # JSON 输出 / 详细日志 / 手动指定 SN / Type2Auth 认证
 auroku --op status --vid 0482 --pid 0a5c --json

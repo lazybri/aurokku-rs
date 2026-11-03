@@ -56,7 +56,7 @@ Platform notes:
 
 - **Linux**: eframe enables both Wayland and X11; the Wayland `app_id` is
   `auroku`, and X11/Wayland client libraries are loaded via `dlopen` at runtime.
-  `build-linux.sh` builds the static musl CLI and the host-glibc GUI in one
+  `.github/scripts/build-linux.sh` builds the static musl CLI and the host-glibc GUI in one
   run (`dist/auroku-linux-x86_64` and `dist/auroku-gui-linux-x86_64`). Static
   musl does not support `dlopen`, so a static GUI cannot start;
   `PKG_CONFIG=/bin/false` avoids the host `libudev` dependency, and the
@@ -68,8 +68,10 @@ Platform notes:
   Microsoft YaHei / PingFang, etc.). Override it with
   `AUROKU_GUI_FONT=/path/to/font.ttf`.
 - **Permissions**: the Linux GUI runs unprivileged and requests device-scoped
-  USB access after selection. Windows may require a libusb driver (same as the
-  CLI).
+  USB access after selection. On Windows the device is claimed by `usbser.sys`
+  (it shows up as "USB Serial Device" / COMx) and libusb cannot open it until a
+  WinUSB driver is installed — see [docs/windows-driver.md](docs/windows-driver.md)
+  for Zadig / wdi-simple / signed-INF instructions.
 
 ### Linux USB permissions
 
@@ -97,18 +99,19 @@ Requires a Rust toolchain (<https://rustup.rs>). `rusb` uses vendored libusb, so
 a C compiler is also required (`gcc`/`clang` on Linux/macOS, MSVC Build Tools or
 MinGW-w64 on Windows).
 
-Each platform has a local build script; artifacts go to `dist/`. The Linux,
-Windows and macOS native scripts build **both the CLI and the GUI**. “Static”
-here refers to Rust/C
-runtime dependencies; whether system libraries and the graphics stack can be
-linked statically is determined by the OS:
+Builds run **only in GitHub Actions**: the repository ships no local build
+entry points any more, and the workflow builds, verifies and publishes every
+release. The scripts under `.github/scripts/` are invoked by CI only; artifacts
+go to `dist/`. “Static” here refers to Rust/C runtime dependencies; whether
+system libraries and the graphics stack can be linked statically is determined
+by the OS:
 
-| Platform | Command | Artifacts |
+| Platform | CI build | Artifacts |
 | --- | --- | --- |
-| Linux (static CLI + host glibc GUI) | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64` (static ELF), `dist/auroku-gui-linux-x86_64` (glibc) |
-| Windows (static CRT) | `.\build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui.exe`, `dist\auroku-windows-<arch>.zip` |
-| macOS (universal) | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku`, `dist/auroku-gui` (arm64 + x86_64) |
-| macOS (native arch) | `./build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui` |
+| Linux (static CLI + host glibc GUI) | `.github/scripts/build-linux.sh` | `dist/auroku-linux-x86_64` (static ELF), `dist/auroku-gui-linux-x86_64` (glibc) |
+| Windows (static CRT + bundled libwdi) | `.github/scripts/build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui.exe`, `dist\auroku-windows-<arch>.zip` |
+| macOS (universal) | `.github/scripts/build-macos.sh` | `dist/auroku`, `dist/auroku-gui` (arm64 + x86_64) |
+| macOS (native arch) | `.github/scripts/build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui` |
 
 Static linking status:
 
@@ -125,6 +128,12 @@ runtime. Static musl binaries do not support `dlopen` and fail with
 `Dynamic loading not supported` / `NoWaylandLib`. Build the GUI against the host
 glibc target; do not use the static musl target.
 
+The Windows job additionally inspects the PE import table with
+`dumpbin /dependents` and fails the build if either binary imports a dynamic C
+runtime (`vcruntime140*.dll`, `msvcp140*.dll`, `ucrtbase.dll`,
+`api-ms-win-crt-*.dll`, `libgcc_s_*.dll`, …). Only OS DLLs are allowed, so the
+static-CRT property cannot regress silently.
+
 ### Static linking verification
 
 Verify the static Linux CLI with the following commands (tested on x86_64):
@@ -137,7 +146,7 @@ readelf -l dist/auroku-linux-x86_64 | grep INTERP   # no output
 ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
-`build-linux.sh` performs these checks after the build and exits on failure.
+`.github/scripts/build-linux.sh` performs these checks after the build and exits on failure.
 
 Linux builds require `musl-gcc` and kernel UAPI headers:
 
@@ -165,7 +174,7 @@ C_INCLUDE_PATH=/usr/include:/usr/include/x86_64-linux-gnu \
 ```
 
 Output: `target/x86_64-unknown-linux-musl/release/auroku` (static ELF). Using
-`build-linux.sh` is recommended: it prepares the UAPI headers and verifies static
+`.github/scripts/build-linux.sh` is recommended: it prepares the UAPI headers and verifies static
 linkage automatically.
 
 ### Cross-compiling Linux (x86_64 static musl)
@@ -175,7 +184,7 @@ On Windows you can cross-compile with Zig, without WSL / Docker:
 ```powershell
 # One-time setup: install Zig, extract it to %USERPROFILE%\tools\zig-<version>,
 # or set the ZIG environment variable / pass -ZigPath path\to\zig.exe
-.\windows-cross-build-linux.ps1
+.\.github/scripts/windows-cross-build-linux.ps1
 ```
 
 Output: `target\x86_64-unknown-linux-musl\release\auroku` (x86_64 static ELF, no
@@ -191,7 +200,7 @@ download the Linux archive from the release artifacts).
 Run on macOS (with Xcode Command Line Tools installed):
 
 ```bash
-chmod +x build-macos.sh
+chmod +x .github/scripts/build-macos.sh
 ./build-macos.sh
 ```
 
@@ -222,9 +231,14 @@ The workflow in `.github/workflows/build.yml` runs **tests → three-platform bu
   creates a GitHub Release and uploads all artifacts.
 - **Pushing a `v*` tag**: the same test, build and release flow.
 
+The Windows job additionally builds **libwdi as a static library** (WDK redist
+MSI extracted with `msiexec /a`, no admin rights on the runner) and links it
+into both binaries, so the shipped tools can install the WinUSB driver without
+an external `wdi-simple.exe`. See [docs/windows-driver.md](docs/windows-driver.md).
+
 Artifacts (each package contains both `auroku` and `auroku-gui`):
 
-- `auroku-windows-x86_64.zip`
+- `auroku-windows-x86_64.zip` (plus `LICENSE-LGPL-3.0.txt` for the bundled libwdi)
 - `auroku-linux-x86_64.tar.gz` (static musl CLI + host-glibc GUI)
 - `auroku-macos-universal.zip` (arm64 + x86_64)
 
@@ -274,6 +288,10 @@ auroku --op maintenance_bit --vid 0482 --pid 0a5c --control 1
 auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
+
+# Windows: install / restore the WinUSB driver (needs wdi-simple.exe)
+auroku --op install-driver --vid 04c5 --pid 1270
+auroku --op restore-driver --vid 04c5 --pid 1270
 
 # JSON / verbose log / explicit SN / Type2Auth
 auroku --op status --vid 0482 --pid 0a5c --json

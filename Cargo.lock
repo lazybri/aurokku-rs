@@ -449,6 +449,7 @@ dependencies = [
 name = "auroku"
 version = "0.2.0"
 dependencies = [
+ "auroku-driver-sys",
  "clap",
  "eframe",
  "hex",
@@ -457,6 +458,10 @@ dependencies = [
  "rustix 1.1.5",
  "serde_json",
 ]
+
+[[package]]
+name = "auroku-driver-sys"
+version = "0.1.0"
 
 [[package]]
 name = "autocfg"
