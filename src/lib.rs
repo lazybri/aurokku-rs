@@ -1939,6 +1939,7 @@ fn fill_strings_from_sysfs(root: &std::path::Path, summary: &mut DeviceSummary) 
 /// The registry stores either plain text or an indirect string such as
 /// "@usbser.inf,%usbserial.devicedesc%;USB Serial Device"; the text after the
 /// last semicolon is the localised name.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn decode_device_text(raw: &str) -> String {
     let text = raw.trim();
     let text = match text.rfind(';') {
