@@ -2013,10 +2013,81 @@ fn windows_device_strings(vid: u16, pid: u16, cache: &mut DeviceNameCache) -> De
             }
         });
 
+    // reg.exe encodes its output with the console code page, so non-ASCII names
+    // come back as replacement characters; re-read those through PowerShell.
+    let lookup = match lookup {
+        Some((product, manufacturer))
+            if has_replacement(&product) || has_replacement(&manufacturer) =>
+        {
+            powershell_device_strings(vid, pid).or(Some((product, manufacturer)))
+        }
+        other => other,
+    };
+
     cache.insert((vid, pid), lookup.clone());
     lookup
 }
 
+/// Whether a registry string was mangled by the console code page.
+#[cfg(windows)]
+fn has_replacement(value: &Option<String>) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|text| text.contains('\u{FFFD}'))
+}
+
+/// Re-read the device properties through PowerShell, which can emit UTF-8.
+///
+/// reg.exe writes its output with the console code page (for example GBK), so
+/// non-ASCII names arrive as replacement characters when read as UTF-8.
+#[cfg(windows)]
+fn powershell_device_strings(vid: u16, pid: u16) -> Option<(Option<String>, Option<String>)> {
+    use std::os::windows::process::CommandExt;
+
+    let script = format!(
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+         $key = 'HKLM:\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_{vid:04X}&PID_{pid:04X}'; \
+         if (Test-Path $key) {{ Get-ChildItem $key | ForEach-Object {{ \
+             $p = Get-ItemProperty $_.PSPath; \
+             if ($p.FriendlyName) {{ 'FN=' + $p.FriendlyName }}; \
+             if ($p.DeviceDesc) {{ 'DD=' + $p.DeviceDesc }}; \
+             if ($p.Mfg) {{ 'MFG=' + $p.Mfg }} }} }}"
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut friendly = None;
+    let mut description = None;
+    let mut manufacturer = None;
+    for line in text.lines() {
+        let line = line.trim();
+        let Some((tag, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = decode_device_text(value);
+        if value.is_empty() {
+            continue;
+        }
+        match tag {
+            "FN" if friendly.is_none() => friendly = Some(value),
+            "DD" if description.is_none() => description = Some(value),
+            "MFG" if manufacturer.is_none() => manufacturer = Some(value),
+            _ => {}
+        }
+    }
+
+    let product = friendly.or(description);
+    if product.is_none() && manufacturer.is_none() {
+        None
+    } else {
+        Some((product, manufacturer))
+    }
+}
 /// Enumerate USB devices, optionally filtered by VID/PID.
 ///
 /// String descriptors are only read when the platform allows it; a permission
@@ -2847,6 +2918,13 @@ mod tests {
         let hit = windows_device_strings(0x04C5, 0x1270, &mut DeviceNameCache::new());
         println!("lookup: {hit:?}");
         assert!(hit.is_some(), "expected a name in the registry");
+        let (product, _) = hit.unwrap();
+        if let Some(product) = product {
+            assert!(
+                !product.contains('\u{FFFD}'),
+                "name should be decoded, got {product:?}"
+            );
+        }
     }
     #[test]
     fn nibble_roundtrip() {
