@@ -115,8 +115,8 @@ jobs:
           $text = $text -replace '#define OPT_ARM', '/* #define OPT_ARM */'
           # The default config.h points at developer machine paths for the
           # libusb-win32/libusbK payloads; we only embed the WinUSB one.
-          $text = $text -replace '#define LIBUSB0_DIR', '/* #define LIBUSB0_DIR */'
-          $text = $text -replace '#define LIBUSBK_DIR', '/* #define LIBUSBK_DIR */'
+          $text = $text -replace '(?m)^#define LIBUSB0_DIR.*$', '/* #define LIBUSB0_DIR (not embedded) */'
+          $text = $text -replace '(?m)^#define LIBUSBK_DIR.*$', '/* #define LIBUSBK_DIR (not embedded) */'
           Set-Content -Path $config -Value $text -NoNewline
 
           $slnDir = "$PWD\libwdi\"
