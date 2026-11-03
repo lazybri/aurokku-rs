@@ -152,16 +152,27 @@ foreach ($symbol in @('wdi_create_list', 'wdi_destroy_list', 'wdi_prepare_driver
 Write-Host 'libwdi.lib defines wdi_create_list/wdi_destroy_list/wdi_prepare_driver/wdi_install_driver/wdi_strerror/wdi_set_log_level'
 
 # --- static CRT heuristic (COFF .drectve records only) -----------------------
+# The compiler records the runtime-library choice as /DEFAULTLIB directives in
+# each COFF object; the archive keeps them verbatim. Only those directives are
+# inspected (the embedded WinUSB payload contains third-party binaries whose
+# arbitrary strings must not influence this check). Matching is case-insensitive
+# and quote-tolerant, because the exact spelling is a compiler detail.
 $archiveText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($libPath))
-if ($archiveText -notmatch '/DEFAULTLIB:LIBCMT') {
-    Fail 'libwdi.lib does not default-link LIBCMT (built with /MD instead of /MT?)'
+$directiveNames = @(
+    [regex]::Matches($archiveText, '(?i)/defaultlib:s*"?([A-Za-z0-9_.-]+)"?') |
+        ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() } |
+        Sort-Object -Unique
+)
+if ($directiveNames -notcontains 'libcmt') {
+    $seen = if ($directiveNames.Count -gt 0) { $directiveNames -join ', ' } else { '<none>' }
+    Fail ('libwdi.lib does not default-link the static CRT (LIBCMT); /DEFAULTLIB directives seen in the archive: ' + $seen)
 }
-foreach ($dynamic in @('/DEFAULTLIB:MSVCRT', '/DEFAULTLIB:MSVCRTD', '/DEFAULTLIB:LIBCMTD', '/DEFAULTLIB:UCRT')) {
-    if ($archiveText -match [regex]::Escape($dynamic)) {
-        Fail ('libwdi.lib references a dynamic or debug CRT: ' + $dynamic)
+foreach ($dynamic in @('msvcrt', 'msvcrtd', 'libcmtd', 'ucrt', 'ucrtd')) {
+    if ($directiveNames -contains $dynamic) {
+        Fail ('libwdi.lib references a dynamic or debug CRT: /DEFAULTLIB:' + $dynamic)
     }
 }
-Write-Host 'libwdi.lib defaults to the static CRT (LIBCMT)'
+Write-Host ('libwdi.lib defaults to the static CRT (LIBCMT); /DEFAULTLIB: ' + ($directiveNames -join ', '))
 
 # --- workflow outputs --------------------------------------------------------
 if ($env:GITHUB_OUTPUT) {
