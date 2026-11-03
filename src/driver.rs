@@ -391,11 +391,11 @@ fn wdi_args(uninstall: bool, vid: u16, pid: u16) -> Vec<String> {
 /// sees an extra prompt.
 #[cfg(all(windows, feature = "static-libwdi"))]
 fn install_backend(vid: u16, pid: u16, log: Option<DriverLog>) -> Result<(), String> {
-    auroku_driver_sys::set_log_level(auroku_driver_sys::WDI_LOG_LEVEL_INFO);
+    libwdi_sys::set_log_level(libwdi_sys::WDI_LOG_LEVEL_INFO);
     emit(&log, "正在生成驱动包（INF/CAT）…");
-    match auroku_driver_sys::install_winusb(vid, pid) {
+    match libwdi_sys::install_winusb(vid, pid) {
         Ok(()) => Ok(()),
-        Err(error) if error.code == auroku_driver_sys::WDI_ERROR_NEEDS_ADMIN => {
+        Err(error) if error.code == libwdi_sys::WDI_ERROR_NEEDS_ADMIN => {
             emit(&log, "需要管理员权限，正在请求 UAC 确认…");
             elevate_self(&driver_args("install-driver", vid, pid))
         }
@@ -426,7 +426,7 @@ fn install_backend(vid: u16, pid: u16, _log: Option<DriverLog>) -> Result<(), St
 fn restore_backend(vid: u16, pid: u16, log: Option<DriverLog>) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
-    if !auroku_driver_sys::is_elevated() {
+    if !libwdi_sys::is_elevated() {
         emit(&log, "需要管理员权限，正在请求 UAC 确认…");
         return elevate_self(&driver_args("restore-driver", vid, pid));
     }

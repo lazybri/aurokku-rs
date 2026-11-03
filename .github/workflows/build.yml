@@ -64,11 +64,29 @@ jobs:
       - name: Unit tests
         run: cargo test --all-targets
 
+  # Build the static libwdi once per run through the reusable, tag-pinned
+  # pipeline on the orphan libwdi-static branch, then hand the artifact to the
+  # Windows build job. The tag is immutable: upgrading libwdi means publishing a
+  # new tag in that branch (libwdi-<upstream>-x64-r<N>) and changing it here.
+  libwdi:
+    name: Build static libwdi
+    if: github.event_name != 'pull_request'
+    # The reusable workflow is statically validated against the permissions
+    # granted here. Its tag-only "release" job declares contents: write, so the
+    # call job must grant it even though that job never runs for branch pushes
+    # (it is gated on refs/tags/libwdi-*). Narrow as much as the validator allows.
+    permissions:
+      contents: write
+    uses: lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@libwdi-1.5.1-x64-r1
+    with:
+      libwdi-sha: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
+      libwdi-ref: libwdi-1.5.1-x64-r1
+
   # 一次运行内并行构建所有平台；发布 job 汇总产物后直接创建 Release。
   build:
     name: Build ${{ matrix.name }}
     if: github.event_name != 'pull_request'
-    needs: test
+    needs: [test, libwdi]
     runs-on: ${{ matrix.os }}
     env:
       # Commit pushes (and manual dispatch with mode=debug) build the dev profile.
@@ -105,56 +123,32 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The MSVC toolset environment is still useful for cargo's MSVC target
+      # (link.exe) and for dumpbin. libwdi itself is no longer built here.
       - uses: microsoft/setup-msbuild@v2
         if: matrix.name == 'windows-x86_64'
 
-      # libwdi is built as a static library here so the release binaries can
-      # install the WinUSB driver in-process (no wdi-simple.exe to ship).
-      # The WDK redist MSI is only extracted (/a), not installed, so no admin
-      # rights are needed on the runner.
-      - name: Build static libwdi (WinUSB payload only)
+      # The static libwdi is produced once per run by the reusable, tag-pinned
+      # pipeline on the orphan libwdi-static branch (see its README.md for the
+      # artifact contract). Nothing in this repository builds libwdi anymore:
+      # no WDK download, no upstream clone, no msbuild targets.
+      - name: Download the pinned static libwdi artifact
+        if: matrix.name == 'windows-x86_64'
+        uses: actions/download-artifact@v4
+        with:
+          name: libwdi-static
+          path: libwdi-out
+
+      - name: Expose LIBWDI_LIB_DIR
         if: matrix.name == 'windows-x86_64'
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          curl.exe -sSL "https://go.microsoft.com/fwlink/p/?LinkID=253170" -o wdk-redist.msi
-          Start-Process msiexec.exe -Wait -ArgumentList '/a','wdk-redist.msi','/qn',"TARGETDIR=$PWD\wdk"
-          git clone --depth 1 --branch v1.5.1 https://github.com/pbatard/libwdi.git
-
-          # Build an x64-only library: dropping OPT_M32/OPT_ARM keeps the embedded
-          # payload to the amd64 WinUSB files, so only installer_x64 has to exist.
-          $config = 'libwdi\msvc\config.h'
-          $text = Get-Content $config -Raw
-          $text = $text -replace '#define OPT_M32', '/* #define OPT_M32 */'
-          $text = $text -replace '#define OPT_ARM', '/* #define OPT_ARM */'
-          # The default config.h points at developer machine paths for the
-          # libusb-win32/libusbK payloads; we only embed the WinUSB one.
-          $text = $text -replace '(?m)^#define LIBUSB0_DIR.*$', '/* #define LIBUSB0_DIR (not embedded) */'
-          $text = $text -replace '(?m)^#define LIBUSBK_DIR.*$', '/* #define LIBUSBK_DIR (not embedded) */'
-          Set-Content -Path $config -Value $text -NoNewline
-
-          $slnDir = "$PWD\libwdi\"
-          # Forward slashes: MSVC would treat \a, \w and \W in the macro as
-          # escape sequences and corrupt the path.
-          $wdkDir = (Join-Path $PWD 'wdk\Windows Kits\8.0') -replace '\\', '/'
-          $macros = 'WDK_DIR="' + $wdkDir + '"'
-          $common = @('/m', '/p:Configuration=Release', "/p:SolutionDir=$slnDir", "/p:BuildMacros=$macros")
-
-          # detect_64build generates libwdi\build64.h which embedder includes.
-          msbuild "libwdi\libwdi\.msvc\detect_64build.vcxproj" @common /p:Platform=x64
-          msbuild "libwdi\libwdi\.msvc\installer_x64.vcxproj" @common /p:Platform=x64
-          msbuild "libwdi\libwdi\.msvc\embedder.vcxproj" @common /p:Platform=Win32
-          # Project references would be resolved as Release|x64 and fail MSB8013
-          # (embedder/installer_x86 are Win32-only); we built them above, so drop
-          # the references from the static library project.
-          $staticProj = 'libwdi\libwdi\.msvc\libwdi_static.vcxproj'
-          $projText = Get-Content $staticProj -Raw
-          $projText = $projText -replace '(?s)\s*<ProjectReference Include="[^"]+">.*?</ProjectReference>', ''
-          Set-Content -Path $staticProj -Value $projText -NoNewline
-
-          msbuild $staticProj @common /p:Platform=x64
-          if (-not (Test-Path "libwdi\x64\Release\lib\libwdi.lib")) { throw 'libwdi.lib was not produced' }
-          "LIBWDI_LIB_DIR=$PWD\libwdi\x64\Release\lib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $libDir = Join-Path $PWD 'libwdi-out/lib'
+          if (-not (Test-Path (Join-Path $libDir 'libwdi.lib'))) {
+            throw 'libwdi-out/lib/libwdi.lib is missing: the libwdi job did not provide the artifact'
+          }
+          "LIBWDI_LIB_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "==> LIBWDI_LIB_DIR=$libDir"
 
       - name: Build & package (Windows, static CRT + static libwdi)
         if: matrix.name == 'windows-x86_64'

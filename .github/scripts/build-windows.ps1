@@ -161,13 +161,34 @@ if ($Target -like '*-msvc') {
 }
 
 # LGPLv3 compliance for the statically linked libwdi (see docs/windows-driver.md).
-$license = Join-Path (Get-Location) 'libwdi\COPYING-LGPL'
+# The license text is part of the pinned libwdi-static artifact, so it is read
+# from $env:LIBWDI_LIB_DIR/COPYING-LGPL. The old in-tree libwdi\COPYING-LGPL
+# path only remains as a fallback for local development. When static-libwdi is
+# active a missing license file is a hard error: packaging a statically linked
+# LGPLv3 library without its license is not acceptable (the previous code
+# silently skipped the file).
 $archiveItems = @($distExe, $distGuiExe)
-if (Test-Path $license) {
+$license = $null
+if ($env:LIBWDI_LIB_DIR) {
+    $artifactLicense = Join-Path $env:LIBWDI_LIB_DIR 'COPYING-LGPL'
+    if (Test-Path $artifactLicense) { $license = $artifactLicense }
+}
+if (-not $license) {
+    $legacyLicense = Join-Path (Get-Location) 'libwdi\COPYING-LGPL'
+    if (Test-Path $legacyLicense) {
+        $license = $legacyLicense
+        Write-Host "==> using the legacy in-tree libwdi license: $legacyLicense"
+    }
+}
+if ($license) {
     $licenseCopy = Join-Path $distDir 'LICENSE-LGPL-3.0.txt'
     Copy-Item $license $licenseCopy -Force
     $archiveItems += $licenseCopy
     Write-Host "License: $licenseCopy"
+} elseif ($features -like '*static-libwdi*') {
+    throw 'static-libwdi is enabled but no COPYING-LGPL was found (looked in LIBWDI_LIB_DIR and libwdi\COPYING-LGPL); refusing to package an LGPLv3 static link without its license'
+} else {
+    Write-Host '==> libwdi is not linked; no LGPL license file to bundle'
 }
 
 $version = (Select-String -Path (Join-Path (Get-Location) 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
