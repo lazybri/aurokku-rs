@@ -1,17 +1,25 @@
 name: Release
 
 on:
+  # Every commit builds debug binaries for all three platforms and only uploads
+  # them as workflow artifacts (never to the Releases page).
   push:
-    tags: ["v*"]
-    # Push to the debug branch to build unoptimised binaries with debug symbols
-    # for all three platforms (no release is published).
-    branches: ["debug"]
+    branches: ["**"]
+    tags-ignore: ["**"]
   pull_request:
+  # Releases are published manually only, through this dispatch.
   workflow_dispatch:
     inputs:
+      mode:
+        description: "构建类型：release 发布会传到 Releases；debug 只上传 Actions 构件"
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
       version:
-        description: "发布版本号（如 v0.2.0；省略 v 会自动补全）"
-        required: true
+        description: "发布版本号（仅 release，如 v0.3.1；省略 v 会自动补全）"
+        required: false
         type: string
       prerelease:
         description: "标记为预发布"
@@ -63,8 +71,8 @@ jobs:
     needs: test
     runs-on: ${{ matrix.os }}
     env:
-      # "debug" branch builds use the dev profile (no --release).
-      AUROKU_BUILD_DEBUG: ${{ github.ref == 'refs/heads/debug' && '1' || '' }}
+      # Commit pushes (and manual dispatch with mode=debug) build the dev profile.
+      AUROKU_BUILD_DEBUG: ${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -192,13 +200,13 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}${{ github.ref == 'refs/heads/debug' && '-debug' || '' }}
+          name: ${{ matrix.name }}${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '-debug' || '' }}
           path: ${{ matrix.glob }}
           if-no-files-found: error
 
   release:
     name: Publish GitHub release
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -214,15 +222,15 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="$INPUT_VERSION"
-            case "$tag" in
-              v*) ;;
-              *) tag="v$tag" ;;
-            esac
-          else
-            tag="${GITHUB_REF_NAME}"
+          tag="$INPUT_VERSION"
+          if [ -z "$tag" ]; then
+            echo "::error::release 模式必须填写 version（例如 v0.3.1）"
+            exit 1
           fi
+          case "$tag" in
+            v*) ;;
+            *) tag="v$tag" ;;
+          esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - uses: softprops/action-gh-release@v2

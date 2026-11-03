@@ -55,13 +55,15 @@ for arg in "$@"; do
 done
 
 DEBUG_BUILD="${DEBUG_BUILD:-${AUROKU_BUILD_DEBUG:-0}}"
+# Scalar (not an array): macOS ships bash 3.2, where expanding an empty
+# array under `set -u` aborts with "unbound variable".
 if [[ "$DEBUG_BUILD" == "1" ]]; then
     PROFILE_DIR=debug
-    RELEASE_FLAG=()
+    RELEASE_FLAG=""
     echo "==> debug build (unoptimised, debug symbols)"
 else
     PROFILE_DIR=release
-    RELEASE_FLAG=(--release)
+    RELEASE_FLAG="--release"
 fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -104,8 +106,8 @@ if [[ "$MODE" == "native" ]]; then
         fi
     fi
 
-    echo "==> cargo build ${RELEASE_FLAG[*]} --locked --target $TARGET --features gui --bins"
-    cargo build "${RELEASE_FLAG[@]}" --locked --target "$TARGET" --features gui --bins
+    echo "==> cargo build $RELEASE_FLAG --locked --target $TARGET --features gui --bins"
+    cargo build $RELEASE_FLAG --locked --target "$TARGET" --features gui --bins
     cp "target/$TARGET/$PROFILE_DIR/auroku" "$OUT"
     cp "target/$TARGET/$PROFILE_DIR/auroku-gui" "$GUI_OUT"
 else
@@ -115,8 +117,8 @@ else
     fi
 
     for target in "${TARGETS[@]}"; do
-        echo "==> cargo build ${RELEASE_FLAG[*]} --locked --target $target --features gui --bins"
-        cargo build "${RELEASE_FLAG[@]}" --locked --target "$target" --features gui --bins
+        echo "==> cargo build $RELEASE_FLAG --locked --target $target --features gui --bins"
+        cargo build $RELEASE_FLAG --locked --target "$target" --features gui --bins
     done
 
     # Combine both slices.

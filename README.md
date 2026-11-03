@@ -220,16 +220,22 @@ To build only the current machine architecture, use `./build-macos.sh --native`
 
 ## GitHub Actions
 
-The workflow in `.github/workflows/build.yml` runs **tests → three-platform build
-→ release** in one go:
+`.github/workflows/build.yml` has two build modes:
 
-- **Pull request**: `cargo fmt --check`, `cargo clippy -D warnings` and
+- **Push a commit (any branch)** → **debug build**: unoptimised binaries with
+  debug symbols for Windows, Linux (static musl) and the macOS universal
+  binary. They are uploaded as workflow artifacts named `*-debug` and are
+  **never** published to the Releases page.
+- **Manual dispatch, mode = `release`** → release build: same three platforms,
+  optimised, and the workflow creates/publishes a GitHub Release. Enter the
+  version (e.g. `v0.3.1`; a missing `v` is added automatically) and optionally
+  mark it prerelease/draft.
+- **Manual dispatch, mode = `debug`** → same debug build as a commit push.
+- **Pull request** → only `cargo fmt --check`, `cargo clippy -D warnings` and
   `cargo test`.
-- **Manual dispatch**: enter a version (e.g. `v0.2.0`; a missing `v` is added
-  automatically), optionally prerelease / draft. The workflow runs tests, builds
-  Windows, Linux (static musl) and the macOS universal binary in parallel, then
-  creates a GitHub Release and uploads all artifacts.
-- **Pushing a `v*` tag**: the same test, build and release flow.
+
+Set `AUROKU_BUILD_DEBUG=1` (or pass `--debug` / `-Debug` to the build scripts)
+to reproduce a debug build locally.
 
 The Windows job additionally builds **libwdi as a static library** (WDK redist
 MSI extracted with `msiexec /a`, no admin rights on the runner) and links it
@@ -238,9 +244,12 @@ an external `wdi-simple.exe`. See [docs/windows-driver.md](docs/windows-driver.m
 
 Artifacts (each package contains both `auroku` and `auroku-gui`):
 
-- `auroku-windows-x86_64.zip` (plus `LICENSE-LGPL-3.0.txt` for the bundled libwdi)
-- `auroku-linux-x86_64.tar.gz` (static musl CLI + host-glibc GUI)
-- `auroku-macos-universal.zip` (arm64 + x86_64)
+- `auroku-windows-x86_64-v<version>.zip` (plus `LICENSE-LGPL-3.0.txt`)
+- `auroku-linux-x86_64-v<version>.tar.gz` (static musl CLI + host-glibc GUI)
+- `auroku-macos-universal-v<version>.zip` (arm64 + x86_64)
+
+Debug builds append `-debug` to the file name, e.g.
+`auroku-windows-x86_64-v0.3.1-debug.zip`.
 
 The Linux GUI is built on `ubuntu-22.04`, so it requires glibc 2.35 or newer;
 the CLI in the same package remains fully static.

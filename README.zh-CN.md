@@ -198,16 +198,20 @@ chmod +x .github/scripts/build-macos.sh
 
 ## GitHub Actions
 
-工作流位于 `.github/workflows/build.yml`，一次触发即可完成
-**测试 → 三平台构建 → 发布 Release**：
+`.github/workflows/build.yml` 提供两种构建模式：
 
-- **Pull request**：只运行 `cargo fmt --check`、`cargo clippy -D warnings`
-  与 `cargo test`。
-- **手动触发（workflow_dispatch）**：填写版本号（如 `v0.2.0`，省略 `v`
-  会自动补全），可选预发布 / 草稿。工作流会先跑测试，再并行构建
-  Windows、Linux（musl 静态）与 macOS 通用二进制，最后自动创建
-  GitHub Release 并上传全部产物。
-- **推送 `v*` 标签**：同样在一次运行内完成测试、构建与发布。
+- **推送任意分支的提交** → **debug 构建**：Windows、Linux（musl 静态）与
+  macOS 通用二进制均以 dev profile（不优化、带调试符号）编译，只作为
+  Actions 工件上传（名称带 `-debug`），**不会**出现在 Releases 页面。
+- **手动触发，模式选 `release`** → 发布构建：同样三平台，优化编译，并创建/
+  发布 GitHub Release。需填写版本号（如 `v0.3.1`，省略 `v` 会自动补全），
+  可选预发布 / 草稿。
+- **手动触发，模式选 `debug`** → 与提交触发的 debug 构建相同。
+- **Pull request** → 只跑 `cargo fmt --check`、`cargo clippy -D warnings` 与
+  `cargo test`。
+
+本地复现 debug 构建：设置 `AUROKU_BUILD_DEBUG=1`，或给构建脚本加
+`--debug` / `-Debug`。
 
 Windows 任务还会额外把 **libwdi 编成静态库**（用 `msiexec /a` 解包 WDK redist，
 runner 上不需要管理员权限）并链接进两个二进制，因此发布版安装 WinUSB 驱动时
@@ -215,9 +219,12 @@ runner 上不需要管理员权限）并链接进两个二进制，因此发布�
 
 产物（每个包内均包含 `auroku` 与 `auroku-gui`）：
 
-- `auroku-windows-x86_64.zip`（另附 `LICENSE-LGPL-3.0.txt`）
-- `auroku-linux-x86_64.tar.gz`（musl 静态 CLI + 宿主机 glibc GUI）
-- `auroku-macos-universal.zip`（arm64 + x86_64）
+- `auroku-windows-x86_64-v<版本>.zip`（另附 `LICENSE-LGPL-3.0.txt`）
+- `auroku-linux-x86_64-v<版本>.tar.gz`（musl 静态 CLI + 宿主机 glibc GUI）
+- `auroku-macos-universal-v<版本>.zip`（arm64 + x86_64）
+
+debug 构建会在文件名后加 `-debug`，例如
+`auroku-windows-x86_64-v0.3.1-debug.zip`。
 
 Linux GUI 在 `ubuntu-22.04` 上构建，要求 glibc 2.35 或更高；同一包内的 CLI
 仍然是完全静态的。
