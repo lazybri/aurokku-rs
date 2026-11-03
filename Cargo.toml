@@ -13,7 +13,7 @@ default = []
 gui = ["dep:eframe"]
 # Link the static libwdi built by CI (Windows only, see docs/windows-driver.md):
 #   cargo build --release --features gui,static-libwdi
-static-libwdi = ["dep:auroku-driver-sys"]
+static-libwdi = ["dep:libwdi-sys"]
 
 [[bin]]
 name = "auroku"
@@ -33,15 +33,20 @@ rusb = { version = "0.9", features = ["vendored"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [target.'cfg(windows)'.dependencies]
-# Hand written libwdi bindings, only pulled in by the static-libwdi feature.
-auroku-driver-sys = { path = "crates/auroku-driver-sys", optional = true }
+# Static libwdi bindings + link rules, shared with qt6 through the orphan
+# libwdi-static branch and pinned by an immutable tag (see
+# https://github.com/lazybri/aurokku-rs/tree/libwdi-static). The crate is
+# optional: only the static-libwdi feature pulls it in, and its build script
+# links the artifact exported through LIBWDI_LIB_DIR.
+libwdi-sys = { git = "https://github.com/lazybri/aurokku-rs", tag = "libwdi-1.5.1-x64-r1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Safe effective-UID check to prevent the Linux GUI from running as root.
 rustix = { version = "1", features = ["process"] }
 
 [workspace]
-members = ["crates/auroku-driver-sys"]
+# The libwdi bindings live on the libwdi-static branch and are consumed as a git
+# tag dependency, so the workspace has a single member: this root package.
 
 [profile.release]
 lto = true

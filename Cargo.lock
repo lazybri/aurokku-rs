@@ -449,19 +449,15 @@ dependencies = [
 name = "auroku"
 version = "0.3.1"
 dependencies = [
- "auroku-driver-sys",
  "clap",
  "eframe",
  "hex",
+ "libwdi-sys",
  "md-5",
  "rusb",
  "rustix 1.1.5",
  "serde_json",
 ]
-
-[[package]]
-name = "auroku-driver-sys"
-version = "0.1.0"
 
 [[package]]
 name = "autocfg"
@@ -1793,6 +1789,11 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
+
+[[package]]
+name = "libwdi-sys"
+version = "0.1.0"
+source = "git+https://github.com/lazybri/aurokku-rs?tag=libwdi-1.5.1-x64-r1#889844aa213501e5ed05e5411abb1dcbe848a73d"
 
 [[package]]
 name = "linux-raw-sys"
