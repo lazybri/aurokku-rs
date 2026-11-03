@@ -130,9 +130,15 @@ jobs:
           msbuild "libwdi\libwdi\.msvc\detect_64build.vcxproj" @common /p:Platform=x64
           msbuild "libwdi\libwdi\.msvc\installer_x64.vcxproj" @common /p:Platform=x64
           msbuild "libwdi\libwdi\.msvc\embedder.vcxproj" @common /p:Platform=Win32
-          # Project references would map embedder/installer to x64 and fail (those
-          # projects are Win32-only); build them above instead.
-          msbuild "libwdi\libwdi\.msvc\libwdi_static.vcxproj" @common /p:Platform=x64 /p:BuildProjectReferences=false
+          # Project references would be resolved as Release|x64 and fail MSB8013
+          # (embedder/installer_x86 are Win32-only); we built them above, so drop
+          # the references from the static library project.
+          $staticProj = 'libwdi\libwdi\.msvc\libwdi_static.vcxproj'
+          $projText = Get-Content $staticProj -Raw
+          $projText = $projText -replace '(?s)\s*<ProjectReference Include="[^"]+">.*?</ProjectReference>', ''
+          Set-Content -Path $staticProj -Value $projText -NoNewline
+
+          msbuild $staticProj @common /p:Platform=x64
           if (-not (Test-Path "libwdi\x64\Release\lib\libwdi.lib")) { throw 'libwdi.lib was not produced' }
           "LIBWDI_LIB_DIR=$PWD\libwdi\x64\Release\lib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
