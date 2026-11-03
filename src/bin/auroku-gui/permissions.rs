@@ -53,10 +53,9 @@ impl From<&DeviceSummary> for DeviceAddress {
 #[cfg(target_os = "linux")]
 pub fn refuse_root_execution() -> bool {
     if rustix::process::geteuid().is_root() {
-        eprintln!(
-            "[auroku-gui] {}",
-            crate::i18n::t("GUI 必须以普通用户运行；请选择设备后再授权 USB 访问。")
-        );
+        crate::diag::log(crate::i18n::t(
+            "GUI 必须以普通用户运行；请选择设备后再授权 USB 访问。",
+        ));
         true
     } else {
         false
@@ -208,7 +207,7 @@ pub fn run_privileged_helper() -> Option<i32> {
     match result {
         Ok(()) => Some(0),
         Err(error) => {
-            eprintln!("[auroku-gui] USB permission helper failed: {error}");
+            crate::diag::log(&format!("USB permission helper failed: {error}"));
             Some(1)
         }
     }

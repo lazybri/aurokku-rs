@@ -223,7 +223,7 @@ impl Worker {
         let _ = self.requests.send(Request::Shutdown);
         if let Some(worker_thread) = self.thread.take() {
             if worker_thread.join().is_err() {
-                eprintln!("[auroku-gui] USB worker thread panicked during shutdown");
+                crate::diag::log("USB worker thread panicked during shutdown");
             }
         }
     }

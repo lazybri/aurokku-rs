@@ -2788,16 +2788,16 @@ impl eframe::App for AurokuApp {
         self.poll_events();
         // Crash-safe restore: only when the user opted in at install time.
         if let Some(record) = auroku::driver::pending_restore() {
-            eprintln!(
-                "[auroku-gui] restoring the original driver for {:04X}:{:04X}",
+            crate::diag::log(&format!(
+                "restoring the original driver for {:04X}:{:04X}",
                 record.vid, record.pid
-            );
+            ));
             if let Err(error) = auroku::driver::restore(record.vid, record.pid, None, false) {
-                eprintln!("[auroku-gui] driver restore failed: {error}");
+                crate::diag::log(&format!("driver restore failed: {error}"));
             }
         }
         if let Err(error) = permissions::revoke_granted_devices(&self.granted_devices) {
-            eprintln!("[auroku-gui] Failed to revoke USB ACLs on exit: {error}");
+            crate::diag::log(&format!("failed to revoke USB ACLs on exit: {error}"));
         }
     }
 }

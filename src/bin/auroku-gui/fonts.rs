@@ -86,12 +86,12 @@ fn load_font() -> Option<Vec<u8>> {
     for path in paths {
         match std::fs::read(&path) {
             Ok(bytes) if !bytes.is_empty() => {
-                eprintln!("[auroku-gui] loaded CJK font {path}");
+                crate::diag::log(&format!("loaded CJK font {path}"));
                 return Some(bytes);
             }
             _ => {}
         }
     }
-    eprintln!("[auroku-gui] no CJK font found; Chinese labels may render as boxes");
+    crate::diag::log("no CJK font found; Chinese labels may render as boxes");
     None
 }

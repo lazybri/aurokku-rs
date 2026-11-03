@@ -1,4 +1,8 @@
 #![forbid(unsafe_code)]
+// Release builds are GUI-subsystem apps: no console window pops up when the
+// executable is started from Explorer. Debug builds keep the console so the
+// [auroku-gui] diagnostics stay visible during development.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 //! Material 3 desktop front-end for auRokku.
 //!
@@ -11,6 +15,7 @@
 //! - macOS: native Cocoa window + OpenGL (glow).
 
 mod app;
+mod diag;
 mod fonts;
 mod i18n;
 mod permissions;
