@@ -65,6 +65,14 @@ pub struct WdiOptionsPrepareDriver {
     pub external_inf: i32,
 }
 
+/// C struct wdi_options_create_list (libwdi.h).
+#[repr(C)]
+pub struct WdiOptionsCreateList {
+    pub list_all: i32,
+    pub list_hubs: i32,
+    pub trim_whitespaces: i32,
+}
+
 #[repr(C)]
 struct TokenElevation {
     token_is_elevated: u32,
@@ -84,6 +92,10 @@ extern "system" {
 }
 
 extern "system" {
+    fn wdi_create_list(list: *mut *mut WdiDeviceInfo, options: *mut WdiOptionsCreateList) -> c_int;
+
+    fn wdi_destroy_list(list: *mut WdiDeviceInfo) -> c_int;
+
     fn wdi_prepare_driver(
         device_info: *mut WdiDeviceInfo,
         path: *const c_char,
@@ -176,6 +188,12 @@ pub fn install_winusb(vid: u16, pid: u16) -> Result<(), WdiError> {
         message: format!("invalid temporary path: {error}"),
     })?;
 
+    // libwdi's installer needs the real hardware ID: without it it never calls
+    // UpdateDriverForPlugAndPlayDevices and the device keeps usbser.
+    let (hardware_id, device_id) = lookup_ids(vid, pid);
+    let hardware_id =
+        hardware_id.or_else(|| CString::new(format!("USB\\VID_{vid:04X}&PID_{pid:04X}")).ok());
+
     let mut device = WdiDeviceInfo {
         next: std::ptr::null_mut(),
         vid,
@@ -184,8 +202,12 @@ pub fn install_winusb(vid: u16, pid: u16) -> Result<(), WdiError> {
         mi: 0,
         desc: description.as_ptr() as *mut c_char,
         driver: std::ptr::null_mut(),
-        device_id: std::ptr::null_mut(),
-        hardware_id: std::ptr::null_mut(),
+        device_id: device_id
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |value| value.as_ptr() as *mut c_char),
+        hardware_id: hardware_id
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |value| value.as_ptr() as *mut c_char),
         compatible_id: std::ptr::null_mut(),
         upper_filter: std::ptr::null_mut(),
         driver_version: 0,
@@ -229,6 +251,47 @@ pub fn install_winusb(vid: u16, pid: u16) -> Result<(), WdiError> {
         code,
         message: error_message(code),
     })
+}
+
+/// Look up the hardware and device IDs of a plugged device.
+///
+/// Mirrors wdi_create_list() usage in wdi-simple: the installer forwards these
+/// strings to UpdateDriverForPlugAndPlayDevices.
+fn lookup_ids(vid: u16, pid: u16) -> (Option<CString>, Option<CString>) {
+    let mut options = WdiOptionsCreateList {
+        list_all: 1,
+        list_hubs: 0,
+        trim_whitespaces: 1,
+    };
+    let mut list: *mut WdiDeviceInfo = std::ptr::null_mut();
+
+    if unsafe { wdi_create_list(&mut list, &mut options) } != WDI_SUCCESS || list.is_null() {
+        return (None, None);
+    }
+
+    let mut hardware_id = None;
+    let mut device_id = None;
+    let mut node = list;
+    while !node.is_null() {
+        // SAFETY: the list is owned by libwdi and stays valid until
+        // wdi_destroy_list below; the strings are copied out before that.
+        let device = unsafe { &*node };
+        if device.vid == vid && device.pid == pid {
+            if !device.hardware_id.is_null() {
+                hardware_id = Some(unsafe { CStr::from_ptr(device.hardware_id) }.to_owned());
+            }
+            if !device.device_id.is_null() {
+                device_id = Some(unsafe { CStr::from_ptr(device.device_id) }.to_owned());
+            }
+            break;
+        }
+        node = device.next;
+    }
+
+    unsafe {
+        let _ = wdi_destroy_list(list);
+    }
+    (hardware_id, device_id)
 }
 
 fn error_message(code: c_int) -> String {
