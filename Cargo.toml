@@ -1,0 +1,20 @@
+# Root manifest of the `libwdi-static` branch.
+#
+# This branch is an ORPHAN branch: it shares no history with the product
+# branches (main / qt6) and only carries the static libwdi build pipeline plus
+# the `libwdi-sys` bindings crate that product builds consume by git tag:
+#
+#   libwdi-sys = { git = "https://github.com/lazybri/aurokku-rs",
+#                  tag = "libwdi-1.5.1-x64-r1", optional = true }
+#
+# It is deliberately a PURE VIRTUAL WORKSPACE (there is no [package] here).
+# Cargo resolves a git dependency by first reading the repository root
+# manifest and then looking for the requested package: with a virtual
+# workspace it enumerates "members" and finds `crates/libwdi-sys`. If this
+# file also declared a [package] with a different name, resolution would stop
+# at that root package and fail with
+#   no matching package named `libwdi-sys` found
+# Keep it package-free.
+[workspace]
+members = ["crates/libwdi-sys"]
+resolver = "2"

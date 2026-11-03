@@ -1,0 +1,21 @@
+[package]
+name = "libwdi-sys"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Static libwdi 1.5.x bindings (WinUSB driver installation), shared through the libwdi-static branch"
+license = "MIT"
+publish = false
+# A git-tag consumer resolves the root virtual workspace and then this member,
+# so the package name is a stable contract (see README.md).
+#
+# "links" records that this crate is the one providing the native "libwdi"
+# library; Cargo then rejects a second provider in the same dependency graph
+# and duplicate native links surface as a clear Cargo error instead of a
+# mysterious linker failure.
+links = "libwdi"
+build = "build.rs"
+
+[lib]
+name = "libwdi_sys"
+path = "src/lib.rs"

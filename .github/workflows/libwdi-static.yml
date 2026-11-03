@@ -1,0 +1,177 @@
+name: libwdi-static
+
+# Builds, verifies and publishes the static libwdi archive (x64 only, WinUSB
+# payload only, static CRT) plus the code that links it.
+#
+# This branch is an ORPHAN branch: it shares no history with the product
+# branches. Product repositories consume it in two ways:
+#
+#   1. workflow_call (artifact, same run) -- see README.md contract 1/2:
+#
+#        jobs:
+#          libwdi:
+#            uses: lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@libwdi-1.5.1-x64-r1
+#            with:
+#              libwdi-sha: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
+#              libwdi-ref: libwdi-1.5.1-x64-r1
+#
+#   2. cargo git tag dependency on the crates/libwdi-sys member (contract 3):
+#
+#        libwdi-sys = { git = "https://github.com/lazybri/aurokku-rs",
+#                       tag = "libwdi-1.5.1-x64-r1", optional = true }
+#
+# Triggers:
+#   - workflow_call : reusable build for main/qt6 CI (artifact in the same run)
+#   - push branch   : self-test, no publishing
+#   - push tag      : self-test + Release with BUILD-INFO.json / SHA256SUMS
+#   - workflow_dispatch: manual re-run of the self-test
+#
+# The tag is the supply-chain anchor and must never be moved: if the pipeline
+# has to change after a release, publish a new libwdi-1.5.1-x64-r<N> tag and
+# update the consumers.
+
+on:
+  workflow_call:
+    inputs:
+      libwdi-sha:
+        description: "pbatard/libwdi upstream commit SHA (full 40-hex, v1.5.1 = 9b23b82...)"
+        type: string
+        required: true
+      libwdi-ref:
+        description: "git ref of THIS repository to check out (the release tag). Never github.sha: under workflow_call that is the caller commit."
+        type: string
+        required: false
+        default: "libwdi-1.5.1-x64-r1"
+    outputs:
+      libwdi_lib_sha256:
+        description: "SHA256 of lib/libwdi.lib inside the libwdi-static artifact"
+        value: ${{ jobs.build.outputs.libwdi_lib_sha256 }}
+  push:
+    branches: [libwdi-static]
+    tags: ["libwdi-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: libwdi-static-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build & verify static libwdi (x64, WinUSB payload)
+    # Pinned image: windows-latest drifts and the pinned MSVC v143 toolset is
+    # exactly what the upstream vcxproj files declare (see docs/BUILDING.md).
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      libwdi_lib_sha256: ${{ steps.verify.outputs.sha256 }}
+    steps:
+      - name: Check out the libwdi-static pipeline itself
+        uses: actions/checkout@v4
+        with:
+          # KEY: when this workflow is called by another workflow, github.sha is
+          # the CALLER's commit. Check out the pipeline tag instead, otherwise
+          # tools/ and patches/ would come from the product branch.
+          ref: ${{ inputs.libwdi-ref || github.sha }}
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Cache the WDK redistributable MSI
+        uses: actions/cache@v4
+        with:
+          path: .cache/wdk-redist.msi
+          # Key contains the MSI SHA256: a rotated download can never be a
+          # stale cache hit (tools/build-libwdi.ps1 re-verifies it anyway).
+          key: wdk-redist-253170-29314207814ce9d5d73695f7e9239539cf37c79e750b9d5ea5a5ef5487a583d6
+
+      - name: Build libwdi.lib
+        shell: pwsh
+        run: ./tools/build-libwdi.ps1 -LibwdiSha '${{ inputs.libwdi-sha }}'
+
+      - name: Verify the artifact contract
+        id: verify
+        shell: pwsh
+        run: ./tools/verify-libwdi.ps1 -LibDir ./libwdi-out/lib
+
+      - name: Upload the libwdi-static artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libwdi-static
+          path: libwdi-out/**
+          if-no-files-found: error
+          retention-days: 30
+
+  crate:
+    name: Bindings crate resolves and links against the artifact
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out the libwdi-static pipeline itself
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.libwdi-ref || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libwdi-static
+          path: libwdi-out
+
+      - name: Resolve the virtual workspace (git-tag consumers rely on this)
+        shell: pwsh
+        run: cargo metadata --format-version 1 > $null
+
+      - name: Link smoke test (libwdi + 19 system import libraries)
+        shell: pwsh
+        env:
+          LIBWDI_LIB_DIR: ${{ github.workspace }}/libwdi-out/lib
+        # --no-run: linking the test harness proves that libwdi.lib and the
+        # system libraries resolve without installing a driver.
+        run: cargo test -p libwdi-sys --no-run --locked
+
+  release:
+    name: Publish release metadata for the immutable tag
+    if: startsWith(github.ref, 'refs/tags/libwdi-')
+    needs: [build, crate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: libwdi-static
+          path: libwdi-out
+
+      - name: Upload BUILD-INFO.json and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          info=libwdi-out/lib/BUILD-INFO.json
+          sums=libwdi-out/lib/SHA256SUMS
+          upstream_ref=$(jq -r .upstream_ref "$info")
+          lib_sha=$(jq -r .lib_sha256 "$info")
+          notes=$(mktemp)
+          {
+            echo "Static libwdi 1.5.1 for x64 (WinUSB payload only, static CRT /MT)."
+            echo
+            echo "upstream: pbatard/libwdi $upstream_ref"
+            echo "libwdi.lib sha256: $lib_sha"
+            echo
+            echo "Artifact contract: lib/libwdi.lib, lib/COPYING-LGPL, lib/BUILD-INFO.json, lib/SHA256SUMS."
+            echo "Consume the pipeline at this immutable tag: lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@$TAG"
+          } > "$notes"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$info" "$sums" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$info" "$sums" \
+              --title "$TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+          fi

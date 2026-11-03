@@ -1,0 +1,13 @@
+# Build inputs that must not be rewritten by git's EOL handling.
+#
+# The patches are applied to a *pinned* upstream commit; any CRLF conversion
+# on checkout would break `git apply` (see tools/build-libwdi.ps1, which also
+# normalises the two target files to LF before applying).
+patches/*.patch -text
+LICENSES/LGPL-3.0.txt -text
+upstream/libwdi.ref -text
+
+# Windows-native helper scripts.
+*.ps1 text eol=crlf
+*.yml text eol=lf
+*.md text eol=lf

@@ -1,0 +1,12 @@
+# Upstream libwdi pinned by the libwdi-static pipeline.
+#
+# v1.5.1 is a *lightweight* tag, so this is the commit the tag points at;
+# it was resolved offline with:
+#   git ls-remote https://github.com/pbatard/libwdi.git refs/tags/v1.5.1
+#
+# Tags are mutable. The build script refuses to run unless this file contains
+# a full 40-hex commit SHA, checks the checked-out commit against it, and the
+# workflow caller passes the same SHA as `libwdi-sha`. Upgrading libwdi is a
+# deliberate change: edit this file, regenerate patches/, and publish a new
+# immutable tag (libwdi-<upstream>-x64-r<N>).
+9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602

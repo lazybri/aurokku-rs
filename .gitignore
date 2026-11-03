@@ -1,0 +1,8 @@
+# Scratch space of tools/build-libwdi.ps1 (upstream clone, WDK extraction).
+/.work/
+# Artifact root (artifact contract: libwdi-out/lib/*).
+/libwdi-out/
+# CWDK redist MSI cache.
+/.cache/
+# Rust build output of the bindings crate.
+/target/
