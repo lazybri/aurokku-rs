@@ -96,9 +96,11 @@ auroku --op install-driver --vid 04C5 --pid 1270 --restore-on-exit
 auroku --op restore-driver --vid 04C5 --pid 1270
 ```
 
-启用 `static-libwdi` 特性（CI 发布构建）时 libwdi 以静态库链接，UAC 对话框显示
-的就是 `auroku.exe` 本身；未启用该特性的源码构建会回退到外部
-`wdi-simple.exe`（查找顺序见文档）。安装记录写入
+发布构建会静态链接 libwdi：Windows 发布任务使用仓库 orphan 分支
+`libwdi-static` 上可复用流水线一次性构建、并由不可变 tag
+`libwdi-1.5.1-x64-r1` 固定的静态库。此时 UAC 对话框显示的就是 `auroku.exe`
+本身；未启用 `static-libwdi` 特性的源码构建会回退到外部 `wdi-simple.exe`
+（查找顺序见文档）。安装记录写入
 `%LOCALAPPDATA%\auroku\driver-state.json`，每一步日志写入
 `%LOCALAPPDATA%\auroku\driver.log`（可用 `AUROKU_STATE_DIR` 覆盖目录）。
 Zadig / 签名 INF 等替代方式与恢复方法详见
@@ -251,10 +253,15 @@ chmod +x build-macos.sh
 构建脚本同样识别 `AUROKU_BUILD_DEBUG=1`（或 `--debug` / `-Debug`），因此可以在
 本地复现三平台的 debug 构建；产物不优化且带调试符号。
 
+Windows 发布任务会使用 orphan `libwdi-static` 分支上可复用流水线一次性构建、
+并由不可变 tag `libwdi-1.5.1-x64-r1` 固定的**静态 libwdi**，链接进两个二进制，
+因此发布版安装 WinUSB 驱动无需外部 `wdi-simple.exe`。构建配方与 LGPL 合规说明
+见 [docs/windows-driver.md](docs/windows-driver.md)。
 
 产物（每个包内均包含 CLI 与 Qt 6 GUI）：
 
-- `auroku-windows-x86_64.zip`（静态 CRT CLI + 含 Qt 运行时的 GUI 目录）
+- `auroku-windows-x86_64.zip`（静态 CRT CLI + 含 Qt 运行时的 GUI 目录；
+  链接 libwdi 时另附 `LICENSE-LGPL-3.0.txt`）
 - `auroku-linux-x86_64.tar.gz`（musl 静态 CLI + Qt 6 GUI）
 - `auroku-macos-universal.zip`（通用 CLI + `auroku-gui.app`）
 
@@ -303,7 +310,8 @@ auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
 
-# Windows：安装 / 恢复 WinUSB 驱动
+# Windows：安装 / 恢复 WinUSB 驱动（发布版内置 libwdi；本地未启用时回退
+# wdi-simple.exe）
 auroku --op install-driver --vid 04c5 --pid 1270
 auroku --op restore-driver --vid 04c5 --pid 1270
 

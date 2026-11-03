@@ -116,9 +116,11 @@ auroku --op install-driver --vid 04C5 --pid 1270 --restore-on-exit
 auroku --op restore-driver --vid 04C5 --pid 1270
 ```
 
-When the `static-libwdi` feature is enabled (CI release builds), libwdi is linked
-statically and the UAC prompt shows `auroku.exe` itself; source builds without
-the feature fall back to an external `wdi-simple.exe` (lookup order in the doc).
+Release builds link libwdi statically: the Windows job consumes the static
+library built once by the reusable pipeline on the orphan `libwdi-static`
+branch, pinned by the immutable `libwdi-1.5.1-x64-r1` tag. The UAC prompt then
+shows `auroku.exe` itself; source builds without the `static-libwdi` feature
+fall back to an external `wdi-simple.exe` (lookup order in the doc).
 The installation is recorded in `%LOCALAPPDATA%\auroku\driver-state.json` and
 every step is logged to `%LOCALAPPDATA%\auroku\driver.log` (override the
 directory with `AUROKU_STATE_DIR`). Full details, Zadig / signed-INF
@@ -282,9 +284,17 @@ The build scripts also honour `AUROKU_BUILD_DEBUG=1` (or `--debug` /
 `-Debug`), so the same three-platform build can be reproduced locally in debug
 mode; the resulting binaries are unoptimised and carry debug symbols.
 
+The Windows release job consumes a **static libwdi** built once by the reusable
+pipeline on the orphan `libwdi-static` branch (pinned by the immutable
+`libwdi-1.5.1-x64-r1` tag) and links it into both binaries, so the shipped
+tools can install the WinUSB driver without an external `wdi-simple.exe`. The
+build recipe and LGPL compliance notes live in
+[docs/windows-driver.md](docs/windows-driver.md).
+
 Artifacts (each package contains the CLI and the Qt 6 GUI):
 
-- `auroku-windows-x86_64.zip` (static-CRT CLI + GUI folder with the Qt runtime)
+- `auroku-windows-x86_64.zip` (static-CRT CLI + GUI folder with the Qt runtime;
+  plus `LICENSE-LGPL-3.0.txt` when libwdi is linked)
 - `auroku-linux-x86_64.tar.gz` (static musl CLI + Qt 6 GUI)
 - `auroku-macos-universal.zip` (universal CLI + `auroku-gui.app`)
 
@@ -336,7 +346,8 @@ auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
 
-# Windows: install / restore the WinUSB driver
+# Windows: install / restore the WinUSB driver (release builds bundle libwdi;
+# local builds without it fall back to wdi-simple.exe)
 auroku --op install-driver --vid 04c5 --pid 1270
 auroku --op restore-driver --vid 04c5 --pid 1270
 

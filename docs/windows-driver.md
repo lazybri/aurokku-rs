@@ -174,19 +174,25 @@ auroku --op status --vid 04C5 --pid 1270
 
 ## 7. 构建(只在 CI)
 
-Windows 发布包里的 libwdi 是在 GitHub Actions 中编译的静态库,仓库不再提供本地
-构建入口。workflow 做这几步:
+Windows 发布包里的 libwdi 是静态库,由仓库 **orphan 分支 `libwdi-static`** 上的
+可复用流水线构建;产品 CI 通过**不可变 tag** `libwdi-1.5.1-x64-r1` 引用它,
+`.github/workflows/build.yml` 不再内联下载 WDK、clone 上游或调用 msbuild:
 
-1. 下载 WDK redist MSI(约 31 MB)并用 `msiexec /a` **解包**(不安装,不需要管理员);
-2. `git clone --depth 1 --branch v1.5.1` libwdi;
-3. `msbuild libwdi_static.vcxproj /p:Configuration=Release /p:Platform=x64`,
-   通过 `BuildMacros=WDK_DIR="...\wdk\Windows Kits\8.0"` 指定 WinUSB 载荷;
-4. 导出 `LIBWDI_LIB_DIR=<repo>\libwdi\x64\Release\lib`;
-5. `build-windows.ps1` 检测到该变量后自动加
-   `--features static-libwdi` 编译并打包。
+1. 产品 CI 的 `libwdi` job 用 `workflow_call` 调用
+   `lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@libwdi-1.5.1-x64-r1`,
+   构建出的静态库经 SHA256、COFF 符号与静态 CRT 校验后,作为 `libwdi-static`
+   artifact 传给 Windows 构建 job;
+2. Windows job 把 artifact 解到 `libwdi-out` 并导出
+   `LIBWDI_LIB_DIR=<artifact>/lib`;`.github/scripts/build-windows.ps1` 检测到该
+   变量后自动加 `--features static-libwdi` 编译并打包,同时从
+   `LIBWDI_LIB_DIR/COPYING-LGPL` 取 LGPL 许可文件放进 zip;
+3. 升级 libwdi = 在 `libwdi-static` 分支发新 tag `libwdi-<版本>-x64-r<N>`,再改
+   产品仓库里的引用;tag 是供应链锚点,发布后不可移动。
 
 本地没有 WDK 也能正常 `cargo build`:特性默认关闭,驱动安装回退到外部
-`wdi-simple.exe`。
+`wdi-simple.exe`。要在本地复现静态链接,先自行构建(或从 Release 下载)
+`libwdi.lib`,再设 `LIBWDI_LIB_DIR` 指向同时含 `libwdi.lib` 与 `COPYING-LGPL`
+的目录后,在 Windows 上执行 `cargo build --features static-libwdi`。
 
 **许可证**:libwdi 是 LGPLv3。静态链接的发布包会附带
 `LICENSE-LGPL-3.0.txt`,并且源码与构建脚本随仓库公开,满足“可重新链接”

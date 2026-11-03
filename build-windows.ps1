@@ -77,8 +77,17 @@ if ($debugBuild) {
     $zipSuffix = ''
 }
 
-Write-Host "==> cargo build $($profileArgs -join ' ') --locked --target $Target --bin auroku (static CRT)"
-cargo build @profileArgs --locked --target $Target --bin auroku
+# CI builds libwdi once (orphan libwdi-static branch) and points LIBWDI_LIB_DIR
+# at the artifact; with that variable present the CLI also links the bundled
+# WinUSB installer (no external wdi-simple.exe needed).
+$features = @()
+if ($env:LIBWDI_LIB_DIR -and (Test-Path $env:LIBWDI_LIB_DIR)) {
+    $features = @('--features', 'static-libwdi')
+    Write-Host "==> static libwdi found in $env:LIBWDI_LIB_DIR"
+}
+
+Write-Host "==> cargo build $($profileArgs -join ' ') $($features -join ' ') --locked --target $Target --bin auroku (static CRT)"
+cargo build @profileArgs @features --locked --target $Target --bin auroku
 
 $built = Join-Path $PSScriptRoot "target\$Target\$profileDir\auroku.exe"
 if (-not (Test-Path $built)) {
@@ -260,11 +269,41 @@ if (-not $SkipGui) {
 # ------------------------------------------------------------------------------
 # Package
 # ------------------------------------------------------------------------------
-$zip = Join-Path $distDir "auroku-windows-$arch$zipSuffix.zip"
+# LGPLv3 compliance for the statically linked libwdi (see docs/windows-driver.md).
+# The license text is part of the pinned libwdi-static artifact, so it is read
+# from $env:LIBWDI_LIB_DIR/COPYING-LGPL. The old in-tree libwdi\COPYING-LGPL
+# path only remains as a fallback for local development. When static-libwdi is
+# active a missing license file is a hard error: packaging a statically linked
+# LGPLv3 library without its license is not acceptable (the previous code
+# silently skipped the file).
 $payload = @($distExe)
 if ($guiDir) {
     $payload += $guiDir
 }
+$license = $null
+if ($env:LIBWDI_LIB_DIR) {
+    $artifactLicense = Join-Path $env:LIBWDI_LIB_DIR 'COPYING-LGPL'
+    if (Test-Path $artifactLicense) { $license = $artifactLicense }
+}
+if (-not $license) {
+    $legacyLicense = Join-Path $PSScriptRoot 'libwdi\COPYING-LGPL'
+    if (Test-Path $legacyLicense) {
+        $license = $legacyLicense
+        Write-Host "==> using the legacy in-tree libwdi license: $legacyLicense"
+    }
+}
+if ($license) {
+    $licenseCopy = Join-Path $distDir 'LICENSE-LGPL-3.0.txt'
+    Copy-Item $license $licenseCopy -Force
+    $payload += $licenseCopy
+    Write-Host "License: $licenseCopy"
+} elseif ($features.Count -gt 0) {
+    throw 'static-libwdi is enabled but no COPYING-LGPL was found (looked in LIBWDI_LIB_DIR and libwdi\COPYING-LGPL); refusing to package an LGPLv3 static link without its license'
+} else {
+    Write-Host '==> libwdi is not linked; no LGPL license file to bundle'
+}
+
+$zip = Join-Path $distDir "auroku-windows-$arch$zipSuffix.zip"
 Compress-Archive -Path $payload -DestinationPath $zip -Force
 
 Write-Host ""
