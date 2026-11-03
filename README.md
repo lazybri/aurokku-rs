@@ -16,6 +16,7 @@ the original Python source.
 - USB layout enumeration, SERI echo and SCDP active probe (`--op probe`)
 - Type2Auth 52/53 authentication (`--type2`)
 - Optional JSON output and verbose USB frame logs
+- Windows WinUSB driver install / restore (`--op install-driver` / `--op restore-driver`)
 - Qt 6 Widgets GUI (native Qt styling, Chinese/English UI, light/dark themes) driven by the same Rust backend through a C ABI
 
 ## GUI front-end (Qt 6 / Widgets)
@@ -78,7 +79,10 @@ Platform notes:
 - **Fonts**: a CJK-capable family is selected at start-up (Microsoft YaHei /
   Noto Sans CJK / PingFang, …). Override it with
   `AUROKU_GUI_FONT=/path/to/font.ttf`.
-- **Permissions**: same as the CLI; a libusb driver may be required on Windows.
+- **Permissions**: on Linux the GUI requests device-scoped ACL access (see
+  below). On Windows the device is claimed by `usbser.sys` (it shows up as
+  "USB Serial Device" / COMx) and libusb cannot open it until a WinUSB driver is
+  installed — see [docs/windows-driver.md](docs/windows-driver.md).
 
 ### Linux USB permissions
 
@@ -99,6 +103,27 @@ The GUI’s Overview / UIM Lock / PIN & ICCID / Probe / Batch / Session / Consol
 pages cover every CLI `--op` operation. The console page shows USB TX/RX logs and
 the full JSON result.
 
+### Windows USB driver
+
+On Windows the device enumerates as "USB Serial Device" (COMx) because Windows
+binds `usbser.sys` to the whole CDC device; libusb can only open it after a
+WinUSB driver has been installed for **that device** (one standard UAC prompt).
+The CLI and the GUI offer the same one-click install/restore path:
+
+```bat
+auroku --op install-driver --vid 04C5 --pid 1270
+auroku --op install-driver --vid 04C5 --pid 1270 --restore-on-exit
+auroku --op restore-driver --vid 04C5 --pid 1270
+```
+
+When the `static-libwdi` feature is enabled (CI release builds), libwdi is linked
+statically and the UAC prompt shows `auroku.exe` itself; source builds without
+the feature fall back to an external `wdi-simple.exe` (lookup order in the doc).
+The installation is recorded in `%LOCALAPPDATA%\auroku\driver-state.json` and
+every step is logged to `%LOCALAPPDATA%\auroku\driver.log` (override the
+directory with `AUROKU_STATE_DIR`). Full details, Zadig / signed-INF
+alternatives and recovery: [docs/windows-driver.md](docs/windows-driver.md).
+
 ## Building
 
 Requires a Rust toolchain (<https://rustup.rs>). `rusb` uses vendored libusb, so
@@ -117,6 +142,11 @@ graphics stack can be linked statically is determined by the OS:
 | Windows (static CRT) | `.\build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui-windows-<arch>\auroku-gui.exe` (+ Qt runtime), `dist\auroku-windows-<arch>.zip` |
 | macOS (universal CLI + native GUI) | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku` (arm64 + x86_64), `dist/auroku-gui.app` |
 | macOS (native arch) | `./build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui.app` |
+
+Set `AUROKU_BUILD_DEBUG=1` (or pass `--debug` to the shell scripts / `-Debug`
+to `build-windows.ps1`) to reproduce an unoptimised debug build with debug
+symbols. The Qt GUI follows that choice (`CMAKE_BUILD_TYPE` is derived from the
+cargo profile), so a debug build never mixes a debug CLI with a release GUI.
 
 Static linking status:
 
@@ -202,7 +232,7 @@ On Windows you can cross-compile with Zig, without WSL / Docker:
 ```powershell
 # One-time setup: install Zig, extract it to %USERPROFILE%\tools\zig-<version>,
 # or set the ZIG environment variable / pass -ZigPath path\to\zig.exe
-.\windows-cross-build-linux.ps1
+.\.github\scripts\windows-cross-build-linux.ps1
 ```
 
 Output: `target\x86_64-unknown-linux-musl\release\auroku` (x86_64 static ELF, no
@@ -247,6 +277,10 @@ The workflow in `.github/workflows/build.yml` runs **tests → three-platform bu
   Windows, Linux (static musl) and the macOS universal binary in parallel, then
   creates a GitHub Release and uploads all artifacts.
 - **Pushing a `v*` tag**: the same test, build and release flow.
+
+The build scripts also honour `AUROKU_BUILD_DEBUG=1` (or `--debug` /
+`-Debug`), so the same three-platform build can be reproduced locally in debug
+mode; the resulting binaries are unoptimised and carry debug symbols.
 
 Artifacts (each package contains the CLI and the Qt 6 GUI):
 
@@ -301,6 +335,10 @@ auroku --op maintenance_bit --vid 0482 --pid 0a5c --control 1
 auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
+
+# Windows: install / restore the WinUSB driver
+auroku --op install-driver --vid 04c5 --pid 1270
+auroku --op restore-driver --vid 04c5 --pid 1270
 
 # JSON / verbose log / explicit SN / Type2Auth
 auroku --op status --vid 0482 --pid 0a5c --json

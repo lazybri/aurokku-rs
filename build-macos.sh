@@ -15,6 +15,7 @@
 #   chmod +x build-macos.sh
 #   ./build-macos.sh             # universal binary (arm64 + x86_64)
 #   ./build-macos.sh --native    # current machine architecture only (faster)
+#   ./build-macos.sh --debug     # unoptimised build with debug symbols
 #   ./build-macos.sh --help
 #
 # Output:
@@ -27,10 +28,11 @@ cd "$(dirname "$0")"
 
 usage() {
     cat <<'EOF'
-Usage: ./build-macos.sh [--native | --universal]
+Usage: ./build-macos.sh [--native | --universal] [--debug]
 
   --universal   Build arm64 + x86_64 and combine with lipo (default)
   --native      Build only the current machine architecture
+  --debug       Unoptimised build with debug symbols
   -h, --help    Show this help
 
 Output:
@@ -47,6 +49,7 @@ for arg in "$@"; do
     case "$arg" in
         --universal) MODE=universal ;;
         --native) MODE=native ;;
+        --debug) DEBUG_BUILD=1 ;;
         -h|--help) usage; exit 0 ;;
         *)
             echo "error: unknown argument: $arg" >&2
@@ -55,6 +58,18 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+DEBUG_BUILD="${DEBUG_BUILD:-${AUROKU_BUILD_DEBUG:-0}}"
+# Scalar (not an array): macOS ships bash 3.2, where expanding an empty
+# array under `set -u` aborts with "unbound variable".
+if [[ "$DEBUG_BUILD" == "1" ]]; then
+    PROFILE_DIR=debug
+    RELEASE_FLAG=""
+    echo "==> debug build (unoptimised, debug symbols)"
+else
+    PROFILE_DIR=release
+    RELEASE_FLAG="--release"
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "error: a macOS binary must be built on macOS." >&2
@@ -95,9 +110,9 @@ if [[ "$MODE" == "native" ]]; then
         fi
     fi
 
-    echo "==> cargo build --release --locked --target $TARGET --bin auroku"
-    cargo build --release --locked --target "$TARGET" --bin auroku
-    cp "target/$TARGET/release/auroku" "$OUT"
+    echo "==> cargo build $RELEASE_FLAG --locked --target $TARGET --bin auroku"
+    cargo build $RELEASE_FLAG --locked --target "$TARGET" --bin auroku
+    cp "target/$TARGET/$PROFILE_DIR/auroku" "$OUT"
 else
     TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
     if command -v rustup >/dev/null 2>&1; then
@@ -105,14 +120,14 @@ else
     fi
 
     for target in "${TARGETS[@]}"; do
-        echo "==> cargo build --release --locked --target $target --bin auroku"
-        cargo build --release --locked --target "$target" --bin auroku
+        echo "==> cargo build $RELEASE_FLAG --locked --target $target --bin auroku"
+        cargo build $RELEASE_FLAG --locked --target "$target" --bin auroku
     done
 
     # Combine both slices. Each slice is already stripped by [profile.release].
     lipo -create \
-        "target/${TARGETS[0]}/release/auroku" \
-        "target/${TARGETS[1]}/release/auroku" \
+        "target/${TARGETS[0]}/$PROFILE_DIR/auroku" \
+        "target/${TARGETS[1]}/$PROFILE_DIR/auroku" \
         -output "$OUT"
 fi
 
@@ -140,8 +155,13 @@ elif [[ -z "$QT_PREFIX" || ! -d "$QT_PREFIX" ]]; then
     echo "         Install it with: brew install qt" >&2
 else
     GUI_BUILD="build/gui-macos"
-    echo "==> cmake -S gui -B $GUI_BUILD -DCMAKE_PREFIX_PATH=$QT_PREFIX"
-    cmake -S gui -B "$GUI_BUILD" -DCMAKE_BUILD_TYPE=Release \
+    if [[ "$PROFILE_DIR" == "debug" ]]; then
+        CMAKE_BUILD_TYPE=Debug
+    else
+        CMAKE_BUILD_TYPE=Release
+    fi
+    echo "==> cmake -S gui -B $GUI_BUILD -DCMAKE_PREFIX_PATH=$QT_PREFIX ($CMAKE_BUILD_TYPE)"
+    cmake -S gui -B "$GUI_BUILD" "-DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE" \
         "-DCMAKE_PREFIX_PATH=$QT_PREFIX"
     echo "==> cmake --build $GUI_BUILD"
     cmake --build "$GUI_BUILD"

@@ -20,7 +20,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
+# The script lives in .github/scripts; build from the repository root.
+Set-Location (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 if (-not $ZigPath -and $env:ZIG) { $ZigPath = $env:ZIG }
 if (-not $ZigPath) {
@@ -38,7 +39,7 @@ $rustTarget = 'x86_64-unknown-linux-musl'
 rustup target add $rustTarget
 
 # --- Generate Zig wrappers (rustc linker + cc-rs CC/AR) ---------------------
-$wrapDir = Join-Path $PSScriptRoot 'target\zigwrap'
+$wrapDir = Join-Path (Get-Location) 'target\zigwrap'
 New-Item -ItemType Directory -Force -Path $wrapDir | Out-Null
 
 $ccSrc = @"

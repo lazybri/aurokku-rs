@@ -1,6 +1,6 @@
 [package]
 name = "auroku-ffi"
-version = "0.2.0-qt6"
+version = "0.3.2-qt6"
 edition = "2021"
 rust-version = "1.88"
 description = "C ABI bridge for the auroku Rust backend (used by the Qt front-end)"
@@ -9,6 +9,11 @@ license = "MIT"
 [lib]
 name = "auroku_ffi"
 crate-type = ["cdylib", "staticlib"]
+
+[features]
+default = []
+# Forward the static libwdi switch to the backend crate (Windows only).
+static-libwdi = ["auroku/static-libwdi"]
 
 [dependencies]
 auroku = { path = "../.." }

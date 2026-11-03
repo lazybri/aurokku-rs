@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(auroku-qt VERSION 0.2.0 LANGUAGES CXX)
+project(auroku-qt VERSION 0.3.2 LANGUAGES CXX)
 
 # CMake versions are numeric only, so the prerelease suffix is appended to the
 # user-visible version string separately.

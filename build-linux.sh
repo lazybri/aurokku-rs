@@ -7,6 +7,7 @@
 #
 # Usage:
 #   ./build-linux.sh
+#   ./build-linux.sh --debug     (unoptimised build with debug symbols)
 #   ./build-linux.sh --help
 #
 # Output:
@@ -19,7 +20,7 @@ cd "$(dirname "$0")"
 
 usage() {
     cat <<'EOF'
-Usage: ./build-linux.sh
+Usage: ./build-linux.sh [--debug]
 
 Builds a fully static x86_64 Linux CLI against musl and, when Qt 6 is
 available, the C++ Qt Widgets GUI against the host glibc.
@@ -43,6 +44,7 @@ EOF
 
 for arg in "$@"; do
     case "$arg" in
+        --debug) DEBUG_BUILD=1 ;;
         -h|--help) usage; exit 0 ;;
         *)
             echo "error: unknown argument: $arg" >&2
@@ -51,6 +53,18 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# Set AUROKU_BUILD_DEBUG=1 (or pass --debug) for an unoptimised build with
+# debug symbols; the CI "debug" mode does this for all three platforms.
+DEBUG_BUILD="\${DEBUG_BUILD:-\${AUROKU_BUILD_DEBUG:-0}}"
+if [[ "$DEBUG_BUILD" == "1" ]]; then
+    PROFILE_DIR=debug
+    RELEASE_FLAG=()
+    echo "==> debug build (unoptimised, debug symbols)"
+else
+    PROFILE_DIR=release
+    RELEASE_FLAG=(--release)
+fi
 
 if ! command -v cargo >/dev/null 2>&1; then
     echo "error: cargo not found. Install Rust: https://rustup.rs" >&2
@@ -119,11 +133,11 @@ export C_INCLUDE_PATH="$PWD/$UAPI_DIR${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
 # Static-only build: statically link musl and the C runtime. A non-PIE
 # relocation model avoids a PT_INTERP entry, so the executable is fully
 # self-contained even when musl-gcc only provides Scrt1.o for -static-pie.
-echo "==> cargo build --release --locked --target $TARGET --bin auroku (static)"
+echo "==> cargo build ${RELEASE_FLAG[*]} --locked --target $TARGET --bin auroku (static)"
 RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static" \
-    cargo build --release --locked --target "$TARGET" --bin auroku
+    cargo build "${RELEASE_FLAG[@]}" --locked --target "$TARGET" --bin auroku
 
-OUT="target/$TARGET/release/auroku"
+OUT="target/$TARGET/$PROFILE_DIR/auroku"
 
 if ! file "$OUT" | grep -Eq 'statically linked|static-pie linked'; then
     echo "error: $OUT is not a static executable" >&2
@@ -155,7 +169,12 @@ if ! command -v cmake >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; the
     echo "warning: cmake/ninja not found; skipping the Qt GUI." >&2
     echo "         Debian/Ubuntu: sudo apt-get install cmake ninja-build" >&2
 else
-    CMAKE_ARGS=(-S gui -B "$GUI_BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release)
+    if [[ "$PROFILE_DIR" == "debug" ]]; then
+        CMAKE_BUILD_TYPE=Debug
+    else
+        CMAKE_BUILD_TYPE=Release
+    fi
+    CMAKE_ARGS=(-S gui -B "$GUI_BUILD" -G Ninja "-DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE")
     if [[ -n "$QT_PREFIX" ]]; then
         CMAKE_ARGS+=("-DCMAKE_PREFIX_PATH=$QT_PREFIX")
     fi

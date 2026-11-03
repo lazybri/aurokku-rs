@@ -15,6 +15,7 @@
 - USB 布局枚举、SERI 回声与 SCDP 主动探测（`--op probe`）
 - Type2Auth 52/53 认证（`--type2`）
 - 可选 JSON 输出、详细 USB 帧日志
+- Windows WinUSB 驱动安装 / 恢复（`--op install-driver` / `--op restore-driver`）
 - Qt 6 Widgets GUI（原生 Qt 风格，中英文界面，浅色 / 深色主题），通过 C ABI 调用同一 Rust 后端
 
 ## GUI 前端（Qt 6 / Widgets）
@@ -66,7 +67,9 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
   调用 `macdeployqt`。
 - **字体**：启动时自动查找系统 CJK 字体（微软雅黑 / Noto Sans CJK / 苹方等）。
   可通过环境变量 `AUROKU_GUI_FONT=/path/to/font.ttf` 指定字体文件或字体族。
-- **权限**：与 CLI 相同；Windows 可能仍需安装 libusb 驱动。
+- **权限**：Linux 下 GUI 按设备申请 ACL 授权（见下）。Windows 下设备默认被
+  `usbser.sys` 占用（显示为“USB 串行设备 / COMx”），libusb 无法直接打开，
+  需要先安装 WinUSB 驱动，详见 [docs/windows-driver.md](docs/windows-driver.md)。
 
 ### Linux USB 权限
 
@@ -80,6 +83,26 @@ ACL 不变，不会扩大其他用户的权限。授权提示最多等待两分�
 
 GUI 中的“概览 / UIM 锁 / PIN & ICCID / 探测 / 批量 / 会话 / 控制台”页面覆盖了
 CLI 的全部 `--op` 操作，并在控制台页面显示 USB TX / RX 日志和完整 JSON 结果。
+
+### Windows USB 驱动
+
+Windows 会把该设备当作“USB 串行设备（COMx）”，因为系统把 `usbser.sys` 绑定到
+整个 CDC 设备；只有在为**该设备**安装 WinUSB 驱动后（一次标准 UAC 提权），
+libusb 才能打开它。CLI 与 GUI 使用同一套一键安装 / 恢复流程：
+
+```bat
+auroku --op install-driver --vid 04C5 --pid 1270
+auroku --op install-driver --vid 04C5 --pid 1270 --restore-on-exit
+auroku --op restore-driver --vid 04C5 --pid 1270
+```
+
+启用 `static-libwdi` 特性（CI 发布构建）时 libwdi 以静态库链接，UAC 对话框显示
+的就是 `auroku.exe` 本身；未启用该特性的源码构建会回退到外部
+`wdi-simple.exe`（查找顺序见文档）。安装记录写入
+`%LOCALAPPDATA%\auroku\driver-state.json`，每一步日志写入
+`%LOCALAPPDATA%\auroku\driver.log`（可用 `AUROKU_STATE_DIR` 覆盖目录）。
+Zadig / 签名 INF 等替代方式与恢复方法详见
+[docs/windows-driver.md](docs/windows-driver.md)。
 
 ## 构建
 
@@ -97,6 +120,11 @@ Build Tools 或 MinGW-w64）。Qt GUI 还需要 Qt 6.5+、CMake 3.21+ 与 Ninja�
 | Windows（静态 CRT） | `.\build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-gui-windows-<arch>\auroku-gui.exe`（含 Qt 运行时）、`dist\auroku-windows-<arch>.zip` |
 | macOS（通用 CLI + 本机 GUI） | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku`（arm64 + x86_64）、`dist/auroku-gui.app` |
 | macOS（仅本机架构） | `./build-macos.sh --native` | `dist/auroku`、`dist/auroku-gui.app` |
+
+需要复现 debug 构建（不优化、带调试符号）时，设置 `AUROKU_BUILD_DEBUG=1`，或给
+shell 脚本加 `--debug` / 给 `build-windows.ps1` 加 `-Debug`。Qt GUI 会跟随该
+选择（`CMAKE_BUILD_TYPE` 由 cargo profile 推导），不会出现 debug CLI 搭配
+release GUI 的混搭。
 
 静态链接结论：
 
@@ -177,7 +205,7 @@ Windows 上可用 Zig 交叉编译，无需 WSL / Docker：
 ```powershell
 # 一次性准备：安装 Zig，解压到 %USERPROFILE%\tools\zig-<版本>，
 # 或者设置 ZIG 环境变量 / 用 -ZigPath 指定 zig.exe
-.\windows-cross-build-linux.ps1
+.\.github\scripts\windows-cross-build-linux.ps1
 ```
 
 产物：`target\x86_64-unknown-linux-musl\release\auroku`
@@ -219,6 +247,10 @@ chmod +x build-macos.sh
   Windows、Linux（musl 静态）与 macOS 通用二进制，最后自动创建
   GitHub Release 并上传全部产物。
 - **推送 `v*` 标签**：同样在一次运行内完成测试、构建与发布。
+
+构建脚本同样识别 `AUROKU_BUILD_DEBUG=1`（或 `--debug` / `-Debug`），因此可以在
+本地复现三平台的 debug 构建；产物不优化且带调试符号。
+
 
 产物（每个包内均包含 CLI 与 Qt 6 GUI）：
 
@@ -270,6 +302,10 @@ auroku --op maintenance_bit --vid 0482 --pid 0a5c --control 1
 auroku --op batch --vid 0482 --pid 0a5c --profile uimlk
 auroku --op exit --vid 0482 --pid 0a5c
 auroku --op exituimlk --vid 0482 --pid 0a5c
+
+# Windows：安装 / 恢复 WinUSB 驱动
+auroku --op install-driver --vid 04c5 --pid 1270
+auroku --op restore-driver --vid 04c5 --pid 1270
 
 # JSON 输出 / 详细日志 / 手动指定 SN / Type2Auth 认证
 auroku --op status --vid 0482 --pid 0a5c --json

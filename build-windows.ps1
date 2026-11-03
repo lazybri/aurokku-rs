@@ -24,15 +24,21 @@
 .EXAMPLE
     .\build-windows.ps1 -SkipGui
 
+.EXAMPLE
+    .\build-windows.ps1 -Debug
+
 .OUTPUTS
     dist\auroku.exe
     dist\auroku-gui-windows-<arch>\auroku-gui.exe (+ Qt runtime)
-    dist\auroku-windows-<arch>.zip
+    dist\auroku-windows-<arch>.zip (-debug suffix for debug builds)
 #>
 param(
     [string]$Target = "",
     [string]$QtPrefix = "",
-    [switch]$SkipGui
+    [switch]$SkipGui,
+    # Unoptimised build with debug symbols (the CI "debug" mode sets
+    # AUROKU_BUILD_DEBUG=1 instead).
+    [switch]$Debug
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,10 +65,22 @@ $arch = switch -Wildcard ($Target) {
     default    { 'x86_64' }
 }
 
-Write-Host "==> cargo build --release --locked --target $Target --bin auroku (static CRT)"
-cargo build --release --locked --target $Target --bin auroku
+$debugBuild = $Debug -or ($env:AUROKU_BUILD_DEBUG -eq '1')
+if ($debugBuild) {
+    $profileArgs = @()
+    $profileDir = 'debug'
+    $zipSuffix = '-debug'
+    Write-Host '==> debug build (unoptimised, debug symbols)'
+} else {
+    $profileArgs = @('--release')
+    $profileDir = 'release'
+    $zipSuffix = ''
+}
 
-$built = Join-Path $PSScriptRoot "target\$Target\release\auroku.exe"
+Write-Host "==> cargo build $($profileArgs -join ' ') --locked --target $Target --bin auroku (static CRT)"
+cargo build @profileArgs --locked --target $Target --bin auroku
+
+$built = Join-Path $PSScriptRoot "target\$Target\$profileDir\auroku.exe"
 if (-not (Test-Path $built)) {
     throw "Build output not found: $built"
 }
@@ -147,8 +165,9 @@ if (-not $SkipGui) {
         $env:PATH = "$resolvedQt\bin;$env:PATH"
 
         $buildDir = Join-Path $PSScriptRoot "build/gui-windows-$arch"
-        Write-Host "==> cmake -S gui -B $buildDir -G Ninja -DCMAKE_PREFIX_PATH=$resolvedQt"
-        & $cmake -S gui -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=Release `
+        if ($debugBuild) { $cmakeBuildType = 'Debug' } else { $cmakeBuildType = 'Release' }
+        Write-Host "==> cmake -S gui -B $buildDir -G Ninja -DCMAKE_PREFIX_PATH=$resolvedQt ($cmakeBuildType)"
+        & $cmake -S gui -B $buildDir -G Ninja "-DCMAKE_BUILD_TYPE=$cmakeBuildType" `
             "-DCMAKE_PREFIX_PATH=$resolvedQt"
         if ($LASTEXITCODE -ne 0) {
             throw "CMake configure failed with exit code $LASTEXITCODE"
@@ -241,7 +260,7 @@ if (-not $SkipGui) {
 # ------------------------------------------------------------------------------
 # Package
 # ------------------------------------------------------------------------------
-$zip = Join-Path $distDir "auroku-windows-$arch.zip"
+$zip = Join-Path $distDir "auroku-windows-$arch$zipSuffix.zip"
 $payload = @($distExe)
 if ($guiDir) {
     $payload += $guiDir

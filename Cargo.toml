@@ -1,14 +1,20 @@
 [workspace]
-members = [".", "crates/auroku-ffi"]
+members = [".", "crates/auroku-ffi", "crates/auroku-driver-sys"]
 resolver = "2"
 
 [package]
 name = "auroku"
-version = "0.2.0-qt6"
+version = "0.3.2-qt6"
 edition = "2021"
 rust-version = "1.88"
 description = "SERI / Type2Auth USB device service tool (Rust port of auRokku.py)"
 license = "MIT"
+
+[features]
+default = []
+# Link the static libwdi built by CI (Windows only, see docs/windows-driver.md):
+#   cargo build --release --features static-libwdi
+static-libwdi = ["dep:auroku-driver-sys"]
 
 [[bin]]
 name = "auroku"
@@ -21,8 +27,12 @@ md-5 = "0.10"
 rusb = { version = "0.9", features = ["vendored"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
+[target.'cfg(windows)'.dependencies]
+# Hand written libwdi bindings, only pulled in by the static-libwdi feature.
+auroku-driver-sys = { path = "crates/auroku-driver-sys", optional = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
-# Safe effective-UID check for the polkit/pkexec start-up elevation path.
+# Safe effective-UID check to prevent the Linux GUI from running as root.
 rustix = { version = "1", features = ["process"] }
 
 [profile.release]

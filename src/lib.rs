@@ -21,6 +21,8 @@ use md5::{Digest, Md5};
 use rusb::{ConfigDescriptor, Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
 use serde_json::{json, Value};
 
+pub mod driver;
+
 /// Default control transfer timeout used by the protocol layer.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Default USB OUT endpoint (address 0x04).
@@ -44,6 +46,9 @@ pub enum AuRokkuError {
     Runtime(String),
     /// Mirrors Python's `TimeoutError`.
     Timeout(String),
+    /// The device is enumerated but cannot be opened until another driver is
+    /// bound to it (Windows: usually `usbser.sys` instead of WinUSB).
+    Driver(String),
 }
 
 impl AuRokkuError {
@@ -53,6 +58,7 @@ impl AuRokkuError {
             AuRokkuError::Value(_) => "ValueError",
             AuRokkuError::Runtime(_) => "RuntimeError",
             AuRokkuError::Timeout(_) => "TimeoutError",
+            AuRokkuError::Driver(_) => "DriverError",
         }
     }
 }
@@ -60,14 +66,42 @@ impl AuRokkuError {
 impl fmt::Display for AuRokkuError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AuRokkuError::Value(msg) | AuRokkuError::Runtime(msg) | AuRokkuError::Timeout(msg) => {
-                f.write_str(msg)
-            }
+            AuRokkuError::Value(msg)
+            | AuRokkuError::Runtime(msg)
+            | AuRokkuError::Timeout(msg)
+            | AuRokkuError::Driver(msg) => f.write_str(msg),
         }
     }
 }
 
 impl std::error::Error for AuRokkuError {}
+
+/// Map a libusb open failure to an actionable message.
+///
+/// On Windows a device bound to a non-WinUSB function driver (for example
+/// usbser.sys, which exposes a CDC-ACM port) still enumerates, but libusb can
+/// never open it. Explain that instead of surfacing a bare "Operation not
+/// supported".
+fn open_failure(err: rusb::Error, vid: u16, pid: u16) -> AuRokkuError {
+    if cfg!(windows) && matches!(err, rusb::Error::NotSupported | rusb::Error::Access) {
+        let mut message = format!("USB error: {err}\n");
+        message.push_str(&format!(
+            "[Windows] {vid:04X}:{pid:04X} is enumerated but is not bound to WinUSB; it is \
+             most likely owned by usbser.sys (shown as \"USB Serial Device\" / COMx).\n"
+        ));
+        message.push_str(&format!(
+            "Install the WinUSB driver, then retry:\n  auroku --op install-driver --vid {vid:04X} \
+             --pid {pid:04X}\n"
+        ));
+        message.push_str(
+            "Or use Zadig: Options -> List All Devices -> WinUSB -> Replace Driver. \
+             See docs/windows-driver.md; the original driver can be restored with \
+             --op restore-driver.",
+        );
+        return AuRokkuError::Driver(message);
+    }
+    AuRokkuError::Runtime(format!("USB error: {err}"))
+}
 
 impl From<rusb::Error> for AuRokkuError {
     fn from(err: rusb::Error) -> Self {
@@ -346,6 +380,7 @@ pub type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct DeviceConfig {
     pub vid: u16,
     pub pid: u16,
+    /// Optional USB bus/address selected by a front-end.
     pub device_location: Option<(u8, u8)>,
     pub sn: Option<String>,
     pub interface: Option<u8>,
@@ -600,7 +635,7 @@ impl AuRokkuDevice {
                 .ok_or_else(|| AuRokkuError::Runtime("USB device is not open".to_string()))?;
             let handle = device
                 .open()
-                .map_err(|e| AuRokkuError::Runtime(format!("USB error: {e}")))?;
+                .map_err(|e| open_failure(e, self.vid, self.pid))?;
             self.handle = Some(handle);
         }
         Ok(())
@@ -1855,6 +1890,11 @@ impl DeviceSummary {
     }
 }
 
+/// Read the descriptor strings of one USB device from sysfs.
+///
+/// libusb only reads string descriptors after opening the device, which fails
+/// for unprivileged users. sysfs exposes the same strings world-readable, so
+/// the device list stays informative before a USB ACL has been granted.
 #[cfg(target_os = "linux")]
 fn read_sysfs_usb_descriptors(
     root: &std::path::Path,
@@ -1895,11 +1935,165 @@ fn read_sysfs_usb_descriptors(
     None
 }
 
+/// Extract the human readable part of a Windows device property.
+///
+/// The registry stores either plain text or an indirect string such as
+/// "@usbser.inf,%usbserial.devicedesc%;USB Serial Device"; the text after the
+/// last semicolon is the localised name.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn decode_device_text(raw: &str) -> String {
+    let text = raw.trim();
+    let text = match text.rfind(';') {
+        Some(index) if text.starts_with('@') => text[index + 1..].trim(),
+        _ => text,
+    };
+    text.trim().to_string()
+}
+/// Look up the display name of a device in the Windows device tree.
+///
+/// Used when the USB string descriptors cannot be read (device already claimed
+/// by another driver, or no permission to open it). Returns the product name
+/// and the manufacturer.
+#[cfg(windows)]
+type DeviceName = Option<(Option<String>, Option<String>)>;
+
+/// Per-scan cache of the registry lookups.
+#[cfg(windows)]
+type DeviceNameCache = std::collections::HashMap<(u16, u16), DeviceName>;
+
+#[cfg(windows)]
+fn windows_device_strings(vid: u16, pid: u16, cache: &mut DeviceNameCache) -> DeviceName {
+    use std::os::windows::process::CommandExt;
+
+    if let Some(hit) = cache.get(&(vid, pid)) {
+        return hit.clone();
+    }
+
+    let key = format!("HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_{vid:04X}&PID_{pid:04X}");
+    let lookup = std::process::Command::new("reg")
+        .args(["query", &key, "/s"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()
+        .and_then(|output| {
+            let text = String::from_utf8_lossy(&output.stdout).into_owned();
+            let mut friendly = None;
+            let mut description = None;
+            let mut manufacturer = None;
+
+            for line in text.lines() {
+                let line = line.trim_start();
+                if line.starts_with("HKEY_") {
+                    continue;
+                }
+                let Some(index) = line.find("REG_SZ").or_else(|| line.find("REG_EXPAND_SZ")) else {
+                    continue;
+                };
+                let name = line[..index].trim();
+                let rest = line[index..]
+                    .split_once(char::is_whitespace)
+                    .map(|(_, value)| value.trim())
+                    .unwrap_or_default();
+                if rest.is_empty() {
+                    continue;
+                }
+                let value = decode_device_text(rest);
+                match name {
+                    "FriendlyName" => friendly = Some(value),
+                    "DeviceDesc" => description = Some(value),
+                    "Mfg" => manufacturer = Some(value),
+                    _ => {}
+                }
+            }
+
+            let product = friendly.or(description);
+            if product.is_none() && manufacturer.is_none() {
+                None
+            } else {
+                Some((product, manufacturer))
+            }
+        });
+
+    // reg.exe encodes its output with the console code page, so non-ASCII names
+    // come back as replacement characters; re-read those through PowerShell.
+    let lookup = match lookup {
+        Some((product, manufacturer))
+            if has_replacement(&product) || has_replacement(&manufacturer) =>
+        {
+            powershell_device_strings(vid, pid).or(Some((product, manufacturer)))
+        }
+        other => other,
+    };
+
+    cache.insert((vid, pid), lookup.clone());
+    lookup
+}
+
+/// Whether a registry string was mangled by the console code page.
+#[cfg(windows)]
+fn has_replacement(value: &Option<String>) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|text| text.contains('\u{FFFD}'))
+}
+
+/// Re-read the device properties through PowerShell, which can emit UTF-8.
+///
+/// reg.exe writes its output with the console code page (for example GBK), so
+/// non-ASCII names arrive as replacement characters when read as UTF-8.
+#[cfg(windows)]
+fn powershell_device_strings(vid: u16, pid: u16) -> Option<(Option<String>, Option<String>)> {
+    use std::os::windows::process::CommandExt;
+
+    let script = format!(
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+         $key = 'HKLM:\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_{vid:04X}&PID_{pid:04X}'; \
+         if (Test-Path $key) {{ Get-ChildItem $key | ForEach-Object {{ \
+             $p = Get-ItemProperty $_.PSPath; \
+             if ($p.FriendlyName) {{ 'FN=' + $p.FriendlyName }}; \
+             if ($p.DeviceDesc) {{ 'DD=' + $p.DeviceDesc }}; \
+             if ($p.Mfg) {{ 'MFG=' + $p.Mfg }} }} }}"
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut friendly = None;
+    let mut description = None;
+    let mut manufacturer = None;
+    for line in text.lines() {
+        let line = line.trim();
+        let Some((tag, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = decode_device_text(value);
+        if value.is_empty() {
+            continue;
+        }
+        match tag {
+            "FN" if friendly.is_none() => friendly = Some(value),
+            "DD" if description.is_none() => description = Some(value),
+            "MFG" if manufacturer.is_none() => manufacturer = Some(value),
+            _ => {}
+        }
+    }
+
+    let product = friendly.or(description);
+    if product.is_none() && manufacturer.is_none() {
+        None
+    } else {
+        Some((product, manufacturer))
+    }
+}
 /// Enumerate USB devices, optionally filtered by VID/PID.
 ///
 /// String descriptors are only read when the platform allows it; a permission
-/// failure still yields a usable bus/address/ID entry. Linux sysfs provides a
-/// readable fallback for names when the current user cannot open the device.
+/// failure still yields a usable bus/address/ID entry. On Linux the missing
+/// strings are recovered from sysfs, which unprivileged users can read.
 pub fn scan_devices(
     filter_vid: Option<u16>,
     filter_pid: Option<u16>,
@@ -1911,6 +2105,9 @@ pub fn scan_devices(
         .map_err(|e| AuRokkuError::Runtime(format!("USB error: {e}")))?;
 
     let mut out = Vec::new();
+    // Names are cached per scan so a driver switch is picked up on the next one.
+    #[cfg(windows)]
+    let mut name_cache = std::collections::HashMap::new();
     for candidate in devices.iter() {
         let descriptor = match candidate.device_descriptor() {
             Ok(descriptor) => descriptor,
@@ -1964,6 +2161,18 @@ pub fn scan_devices(
                 summary.manufacturer = summary.manufacturer.or(manufacturer);
                 summary.product = summary.product.or(product);
                 summary.serial = summary.serial.or(serial);
+            }
+        }
+
+        // Windows keeps a display name in the device tree even for devices we
+        // are not allowed to open (for example ones bound to usbser.sys).
+        #[cfg(windows)]
+        if summary.product.is_none() || summary.manufacturer.is_none() {
+            if let Some((product, manufacturer)) =
+                windows_device_strings(summary.vid, summary.pid, &mut name_cache)
+            {
+                summary.product = summary.product.or(product);
+                summary.manufacturer = summary.manufacturer.or(manufacturer);
             }
         }
 
@@ -2066,6 +2275,12 @@ enum Op {
     Exituimlk,
     #[value(name = "exit")]
     Exit,
+    /// Install the WinUSB driver for the device (Windows only)
+    #[value(name = "install-driver")]
+    InstallDriver,
+    /// Restore the original driver (Windows only)
+    #[value(name = "restore-driver")]
+    RestoreDriver,
 }
 
 impl Op {
@@ -2083,6 +2298,8 @@ impl Op {
             Op::Probe => "probe",
             Op::Exituimlk => "exituimlk",
             Op::Exit => "exit",
+            Op::InstallDriver => "install-driver",
+            Op::RestoreDriver => "restore-driver",
         }
     }
 }
@@ -2153,6 +2370,14 @@ struct Cli {
     /// Output JSON
     #[arg(long)]
     json: bool,
+
+    /// With --op install-driver: restore the original driver when the process exits
+    #[arg(long = "restore-on-exit")]
+    restore_on_exit: bool,
+
+    /// Internal: append to the driver log instead of truncating it
+    #[arg(long = "driver-log-append", hide = true)]
+    driver_log_append: bool,
 }
 
 fn py_bool(value: bool) -> &'static str {
@@ -2410,6 +2635,33 @@ fn print_human_report(op: &str, result: &Value) {
         "exituimlk" | "exit" => {
             println!("  Method        : {}", str_field(result, "method"));
         }
+        "install-driver" => {
+            println!(
+                "  Driver        : WinUSB installed for {}:{}",
+                str_field(result, "vid"),
+                str_field(result, "pid")
+            );
+            println!("  State file    : {}", str_field(result, "state_file"));
+            println!(
+                "  Restore       : {}",
+                if result
+                    .get("restore_on_exit")
+                    .map(is_truthy)
+                    .unwrap_or(false)
+                {
+                    "on exit"
+                } else {
+                    "manual (--op restore-driver)"
+                }
+            );
+        }
+        "restore-driver" => {
+            println!(
+                "  Driver        : original driver restored for {}:{}",
+                str_field(result, "vid"),
+                str_field(result, "pid")
+            );
+        }
         _ => {}
     }
 
@@ -2467,6 +2719,10 @@ Examples:
 
   # Exit maintenance / UIM service:
   auroku --op exit --vid 0482 --pid 0a5c
+
+  # Windows: install / restore the WinUSB driver (requires wdi-simple.exe)
+  auroku --op install-driver --vid 04C5 --pid 1270
+  auroku --op restore-driver --vid 04C5 --pid 1270
 ";
 
 fn task_from_cli(cli: &Cli) -> Task {
@@ -2493,6 +2749,72 @@ fn task_from_cli(cli: &Cli) -> Task {
         },
         Op::Exituimlk => Task::Exituimlk,
         Op::Exit => Task::Exit,
+        Op::InstallDriver | Op::RestoreDriver => {
+            unreachable!("driver operations are handled before task dispatch")
+        }
+    }
+}
+
+/// Run `--op install-driver` / `--op restore-driver` and return the exit code.
+fn run_driver_op(cli: &Cli) -> i32 {
+    let outcome: Result<Value, String> = match cli.op {
+        Op::InstallDriver => driver::install(
+            cli.vid,
+            cli.pid,
+            cli.restore_on_exit,
+            None,
+            cli.driver_log_append,
+        )
+        .map(|record| {
+            json!({
+                "operation": "install-driver",
+                "success": true,
+                "vid": format!("0x{:04x}", record.vid),
+                "pid": format!("0x{:04x}", record.pid),
+                "restore_on_exit": record.restore_on_exit,
+                "state_file": driver::state_path().display().to_string(),
+            })
+        }),
+        Op::RestoreDriver => {
+            driver::restore(cli.vid, cli.pid, None, cli.driver_log_append).map(|()| {
+                json!({
+                    "operation": "restore-driver",
+                    "success": true,
+                    "vid": format!("0x{:04x}", cli.vid),
+                    "pid": format!("0x{:04x}", cli.pid),
+                })
+            })
+        }
+        _ => unreachable!("only driver operations reach this helper"),
+    };
+
+    match outcome {
+        Ok(result) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_default()
+                );
+            } else {
+                print_human_report(cli.op.as_str(), &result);
+            }
+            0
+        }
+        Err(message) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "error": "DriverError",
+                        "message": message,
+                    }))
+                    .unwrap_or_default()
+                );
+            } else {
+                eprintln!("Error (DriverError): {message}");
+            }
+            1
+        }
     }
 }
 
@@ -2502,6 +2824,18 @@ fn task_from_cli(cli: &Cli) -> Task {
 /// the original Python tool.
 pub fn cli_main() {
     let cli = Cli::parse();
+
+    if let Some(record) = driver::pending_restore() {
+        eprintln!(
+            "[WARN] A previous session installed the WinUSB driver for {:04X}:{:04X} and did \
+             not restore it. Run: auroku --op restore-driver --vid {:04X} --pid {:04X}",
+            record.vid, record.pid, record.vid, record.pid
+        );
+    }
+
+    if matches!(cli.op, Op::InstallDriver | Op::RestoreDriver) {
+        std::process::exit(run_driver_op(&cli));
+    }
 
     if cli.op == Op::Writelk && cli.val.is_none() {
         eprintln!("Error: --op writelk requires --val <8_hex_chars> (e.g. --val 80e48ed2)");
@@ -2584,6 +2918,38 @@ pub fn cli_main() {
 mod tests {
     use super::*;
 
+    #[test]
+    fn decode_device_text_strips_indirect_strings() {
+        assert_eq!(
+            decode_device_text("@usbser.inf,%usbserial.devicedesc%;USB Serial Device"),
+            "USB Serial Device"
+        );
+        assert_eq!(
+            decode_device_text("au T008 High Speed"),
+            "au T008 High Speed"
+        );
+        assert_eq!(decode_device_text("  plain  "), "plain");
+        assert_eq!(
+            decode_device_text("@oem61.inf,%devicename%;au T008"),
+            "au T008"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "queries the live Windows device tree"]
+    fn windows_device_strings_live() {
+        let hit = windows_device_strings(0x04C5, 0x1270, &mut DeviceNameCache::new());
+        println!("lookup: {hit:?}");
+        assert!(hit.is_some(), "expected a name in the registry");
+        let (product, _) = hit.unwrap();
+        if let Some(product) = product {
+            assert!(
+                !product.contains('\u{FFFD}'),
+                "name should be decoded, got {product:?}"
+            );
+        }
+    }
     #[test]
     fn nibble_roundtrip() {
         let data = [0x00, 0x0F, 0xA5, 0xFF, 0x53, 0x01];
@@ -2704,47 +3070,6 @@ mod tests {
     }
 
     #[test]
-    fn task_names_match_cli() {
-        assert_eq!(Task::Status.op_name(), "status");
-        assert_eq!(
-            Task::MaintenanceBit { control: 1 }.op_name(),
-            "maintenance_bit"
-        );
-        assert_eq!(
-            Task::Probe {
-                kind: ProbeKind::List,
-                timeout_secs: 1.0
-            }
-            .op_name(),
-            "probe"
-        );
-        assert_eq!(Task::Exituimlk.op_name(), "exituimlk");
-    }
-
-    #[test]
-    fn probe_and_profile_names_roundtrip() {
-        for kind in [ProbeKind::List, ProbeKind::Seri, ProbeKind::Scdp] {
-            assert_eq!(ProbeKind::from_name(kind.as_str()), Some(kind));
-        }
-        for profile in [BatchProfile::Basic, BatchProfile::Uimlk] {
-            assert_eq!(BatchProfile::from_name(profile.as_str()), Some(profile));
-        }
-        assert_eq!(ProbeKind::from_name("bogus"), None);
-        assert_eq!(BatchProfile::from_name("bogus"), None);
-    }
-
-    #[test]
-    fn device_config_defaults_match_cli() {
-        let config = DeviceConfig::new(0x0482, 0x0A5C);
-        assert_eq!(config.ep_out, DEFAULT_EP_OUT);
-        assert_eq!(config.ep_in, DEFAULT_EP_IN);
-        assert_eq!(config.interface, None);
-        assert!(config.sn.is_none());
-        assert!(!config.verbose);
-        assert!(!config.type2);
-    }
-
-    #[test]
     fn device_display_name_includes_manufacturer_and_product() {
         let device = DeviceSummary {
             vid: 0x1234,
@@ -2788,5 +3113,46 @@ mod tests {
         assert_eq!(read_sysfs_usb_descriptors(&root, 1, 3), None);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn task_names_match_cli() {
+        assert_eq!(Task::Status.op_name(), "status");
+        assert_eq!(
+            Task::MaintenanceBit { control: 1 }.op_name(),
+            "maintenance_bit"
+        );
+        assert_eq!(
+            Task::Probe {
+                kind: ProbeKind::List,
+                timeout_secs: 1.0
+            }
+            .op_name(),
+            "probe"
+        );
+        assert_eq!(Task::Exituimlk.op_name(), "exituimlk");
+    }
+
+    #[test]
+    fn probe_and_profile_names_roundtrip() {
+        for kind in [ProbeKind::List, ProbeKind::Seri, ProbeKind::Scdp] {
+            assert_eq!(ProbeKind::from_name(kind.as_str()), Some(kind));
+        }
+        for profile in [BatchProfile::Basic, BatchProfile::Uimlk] {
+            assert_eq!(BatchProfile::from_name(profile.as_str()), Some(profile));
+        }
+        assert_eq!(ProbeKind::from_name("bogus"), None);
+        assert_eq!(BatchProfile::from_name("bogus"), None);
+    }
+
+    #[test]
+    fn device_config_defaults_match_cli() {
+        let config = DeviceConfig::new(0x0482, 0x0A5C);
+        assert_eq!(config.ep_out, DEFAULT_EP_OUT);
+        assert_eq!(config.ep_in, DEFAULT_EP_IN);
+        assert_eq!(config.interface, None);
+        assert!(config.sn.is_none());
+        assert!(!config.verbose);
+        assert!(!config.type2);
     }
 }
