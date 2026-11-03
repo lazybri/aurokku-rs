@@ -162,7 +162,8 @@ impl Worker {
                             pid,
                             restore_on_exit,
                         } => {
-                            let result = driver::install(vid, pid, restore_on_exit).map(|_| ());
+                            let result =
+                                driver::install(vid, pid, restore_on_exit, None, false).map(|_| ());
                             let _ = thread_events.send(Event::Driver {
                                 operation: "install",
                                 vid,
@@ -171,7 +172,7 @@ impl Worker {
                             });
                         }
                         Request::RestoreDriver { vid, pid } => {
-                            let result = driver::restore(vid, pid);
+                            let result = driver::restore(vid, pid, None, false);
                             let _ = thread_events.send(Event::Driver {
                                 operation: "restore",
                                 vid,

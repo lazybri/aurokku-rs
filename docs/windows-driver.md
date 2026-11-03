@@ -52,6 +52,10 @@ UAC 的处理刻意做成对小白最省事的形式:
    UAC 上显示的是 auRokku;
 3. 取消 UAC 只会得到一条“elevated helper exited with code ...”错误,不会留下半装状态。
 
+每一步都会写入 `%LOCALAPPDATA%\auroku\driver.log`(目录可用 `AUROKU_STATE_DIR`
+覆盖):**每次用户操作截断重写**,提权子进程只追加。提权助手以隐藏方式运行,
+不会再弹出控制台 / PowerShell 窗口。
+
 CLI(与 GUI 按钮完全等价):
 
 ```bat

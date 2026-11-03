@@ -642,6 +642,8 @@ impl AurokuApp {
         self.busy = true;
         self.busy_label = i18n::t("正在安装 WinUSB 驱动…").to_owned();
         self.log(i18n::t("正在安装 WinUSB 驱动（需要管理员确认）…").to_owned());
+        let log_path = auroku::driver::log_path().display().to_string();
+        self.log(i18n::tf("驱动日志：{path}", &[("path", &log_path)]));
         self.worker.send(Request::InstallDriver {
             vid,
             pid,
@@ -656,6 +658,8 @@ impl AurokuApp {
         self.busy = true;
         self.busy_label = i18n::t("正在恢复原始驱动…").to_owned();
         self.log(i18n::t("正在恢复原始驱动（需要管理员确认）…").to_owned());
+        let log_path = auroku::driver::log_path().display().to_string();
+        self.log(i18n::tf("驱动日志：{path}", &[("path", &log_path)]));
         self.worker.send(Request::RestoreDriver { vid, pid });
     }
 
@@ -2788,7 +2792,7 @@ impl eframe::App for AurokuApp {
                 "[auroku-gui] restoring the original driver for {:04X}:{:04X}",
                 record.vid, record.pid
             );
-            if let Err(error) = auroku::driver::restore(record.vid, record.pid) {
+            if let Err(error) = auroku::driver::restore(record.vid, record.pid, None, false) {
                 eprintln!("[auroku-gui] driver restore failed: {error}");
             }
         }

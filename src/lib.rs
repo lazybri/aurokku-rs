@@ -2363,6 +2363,10 @@ struct Cli {
     /// With --op install-driver: restore the original driver when the process exits
     #[arg(long = "restore-on-exit")]
     restore_on_exit: bool,
+
+    /// Internal: append to the driver log instead of truncating it
+    #[arg(long = "driver-log-append", hide = true)]
+    driver_log_append: bool,
 }
 
 fn py_bool(value: bool) -> &'static str {
@@ -2743,7 +2747,14 @@ fn task_from_cli(cli: &Cli) -> Task {
 /// Run `--op install-driver` / `--op restore-driver` and return the exit code.
 fn run_driver_op(cli: &Cli) -> i32 {
     let outcome: Result<Value, String> = match cli.op {
-        Op::InstallDriver => driver::install(cli.vid, cli.pid, cli.restore_on_exit).map(|record| {
+        Op::InstallDriver => driver::install(
+            cli.vid,
+            cli.pid,
+            cli.restore_on_exit,
+            None,
+            cli.driver_log_append,
+        )
+        .map(|record| {
             json!({
                 "operation": "install-driver",
                 "success": true,
@@ -2753,14 +2764,16 @@ fn run_driver_op(cli: &Cli) -> i32 {
                 "state_file": driver::state_path().display().to_string(),
             })
         }),
-        Op::RestoreDriver => driver::restore(cli.vid, cli.pid).map(|()| {
-            json!({
-                "operation": "restore-driver",
-                "success": true,
-                "vid": format!("0x{:04x}", cli.vid),
-                "pid": format!("0x{:04x}", cli.pid),
+        Op::RestoreDriver => {
+            driver::restore(cli.vid, cli.pid, None, cli.driver_log_append).map(|()| {
+                json!({
+                    "operation": "restore-driver",
+                    "success": true,
+                    "vid": format!("0x{:04x}", cli.vid),
+                    "pid": format!("0x{:04x}", cli.pid),
+                })
             })
-        }),
+        }
         _ => unreachable!("only driver operations reach this helper"),
     };
 

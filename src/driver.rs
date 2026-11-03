@@ -220,13 +220,94 @@ fn missing_wdi_message() -> String {
     )
 }
 
+/// Receives human readable driver progress lines (GUI console, CLI stderr).
+pub type DriverLog = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Path of the driver operation log.
+pub fn log_path() -> PathBuf {
+    state_dir().join("driver.log")
+}
+
+/// UTC timestamp used as the log prefix.
+#[cfg(windows)]
+fn timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let day = seconds % 86_400;
+    format!(
+        "{:02}:{:02}:{:02}Z",
+        day / 3600,
+        (day % 3600) / 60,
+        day % 60
+    )
+}
+
+/// Append one line to the driver log; logging must never break an install.
+#[cfg(windows)]
+fn write_log_file(line: &str) {
+    use std::io::Write;
+
+    let path = log_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    let _ = writeln!(file, "[{}] {line}", timestamp());
+}
+
+/// Truncate the log file and start a new section for a user-triggered run.
+#[cfg(windows)]
+fn reset_log(header: &str) {
+    let path = log_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(
+        &path,
+        format!(
+            "[{}] === {header} ===
+",
+            timestamp()
+        ),
+    );
+}
+
+/// Emit one progress line: always to the log file, then to the sink or stderr.
+#[cfg(windows)]
+fn emit(log: &Option<DriverLog>, line: impl AsRef<str>) {
+    let text = line.as_ref();
+    write_log_file(text);
+    match log {
+        Some(sink) => sink(text),
+        None => eprintln!("[driver] {text}"),
+    }
+}
 /// Install WinUSB for the device and wait until libusb can open it.
 ///
 /// Requires an interactive UAC confirmation; the helper is started elevated.
 #[cfg(windows)]
-pub fn install(vid: u16, pid: u16, restore_on_exit: bool) -> Result<DriverRecord, String> {
-    install_backend(vid, pid)?;
-    wait_until(true, vid, pid, Duration::from_secs(30))?;
+pub fn install(
+    vid: u16,
+    pid: u16,
+    restore_on_exit: bool,
+    log: Option<DriverLog>,
+    append_log: bool,
+) -> Result<DriverRecord, String> {
+    if !append_log {
+        reset_log(&format!("install {vid:04X}:{pid:04X}"));
+    }
+    emit(
+        &log,
+        format!("正在为 {vid:04X}:{pid:04X} 准备 WinUSB 驱动…"),
+    );
+    install_backend(vid, pid, log.clone())?;
+    emit(&log, "等待设备切换到 WinUSB…");
+    wait_until(true, vid, pid, Duration::from_secs(30), &log)?;
+    emit(&log, "WinUSB 驱动已就绪");
 
     let record = DriverRecord {
         vid,
@@ -241,15 +322,30 @@ pub fn install(vid: u16, pid: u16, restore_on_exit: bool) -> Result<DriverRecord
 
 /// Install WinUSB for the device (non-Windows stub).
 #[cfg(not(windows))]
-pub fn install(_vid: u16, _pid: u16, _restore_on_exit: bool) -> Result<DriverRecord, String> {
+pub fn install(
+    _vid: u16,
+    _pid: u16,
+    _restore_on_exit: bool,
+    _log: Option<DriverLog>,
+    _append_log: bool,
+) -> Result<DriverRecord, String> {
     Err("WinUSB driver installation is only supported on Windows".to_owned())
 }
 
 /// Restore the original driver (usbser) and mark the record as restored.
 #[cfg(windows)]
-pub fn restore(vid: u16, pid: u16) -> Result<(), String> {
-    restore_backend(vid, pid)?;
-    wait_until(false, vid, pid, Duration::from_secs(30))?;
+pub fn restore(vid: u16, pid: u16, log: Option<DriverLog>, append_log: bool) -> Result<(), String> {
+    if !append_log {
+        reset_log(&format!("restore {vid:04X}:{pid:04X}"));
+    }
+    emit(
+        &log,
+        format!("正在为 {vid:04X}:{pid:04X} 移除 WinUSB 驱动…"),
+    );
+    restore_backend(vid, pid, log.clone())?;
+    emit(&log, "等待设备恢复为 usbser…");
+    wait_until(false, vid, pid, Duration::from_secs(30), &log)?;
+    emit(&log, "已恢复原始驱动");
 
     if let Some(mut record) = load_record().filter(|record| record.vid == vid && record.pid == pid)
     {
@@ -261,7 +357,12 @@ pub fn restore(vid: u16, pid: u16) -> Result<(), String> {
 
 /// Restore the original driver (non-Windows stub).
 #[cfg(not(windows))]
-pub fn restore(_vid: u16, _pid: u16) -> Result<(), String> {
+pub fn restore(
+    _vid: u16,
+    _pid: u16,
+    _log: Option<DriverLog>,
+    _append_log: bool,
+) -> Result<(), String> {
     Err("WinUSB driver installation is only supported on Windows".to_owned())
 }
 
@@ -289,11 +390,13 @@ fn wdi_args(uninstall: bool, vid: u16, pid: u16) -> Vec<String> {
 /// libwdi reports WDI_ERROR_NEEDS_ADMIN, so an already elevated shell never
 /// sees an extra prompt.
 #[cfg(all(windows, feature = "static-libwdi"))]
-fn install_backend(vid: u16, pid: u16) -> Result<(), String> {
+fn install_backend(vid: u16, pid: u16, log: Option<DriverLog>) -> Result<(), String> {
     auroku_driver_sys::set_log_level(auroku_driver_sys::WDI_LOG_LEVEL_INFO);
+    emit(&log, "正在生成驱动包（INF/CAT）…");
     match auroku_driver_sys::install_winusb(vid, pid) {
         Ok(()) => Ok(()),
         Err(error) if error.code == auroku_driver_sys::WDI_ERROR_NEEDS_ADMIN => {
+            emit(&log, "需要管理员权限，正在请求 UAC 确认…");
             elevate_self(&driver_args("install-driver", vid, pid))
         }
         Err(error) => Err(format!("libwdi: {error}")),
@@ -302,7 +405,7 @@ fn install_backend(vid: u16, pid: u16) -> Result<(), String> {
 
 /// Install WinUSB by running the external wdi-simple helper (fallback).
 #[cfg(all(windows, not(feature = "static-libwdi")))]
-fn install_backend(vid: u16, pid: u16) -> Result<(), String> {
+fn install_backend(vid: u16, pid: u16, _log: Option<DriverLog>) -> Result<(), String> {
     let wdi = locate_wdi().ok_or_else(missing_wdi_message)?;
     let args = wdi_args(false, vid, pid);
     let code = run_elevated(&wdi, &args)?;
@@ -320,14 +423,16 @@ fn install_backend(vid: u16, pid: u16) -> Result<(), String> {
 /// driver store and PnP simply re-binds it on the next scan. Delete every
 /// package that targets this VID/PID first, then drop the node.
 #[cfg(all(windows, feature = "static-libwdi"))]
-fn restore_backend(vid: u16, pid: u16) -> Result<(), String> {
+fn restore_backend(vid: u16, pid: u16, log: Option<DriverLog>) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     if !auroku_driver_sys::is_elevated() {
+        emit(&log, "需要管理员权限，正在请求 UAC 确认…");
         return elevate_self(&driver_args("restore-driver", vid, pid));
     }
 
     let packages = driver_packages(vid, pid);
+    emit(&log, format!("找到 {} 个驱动包待删除", packages.len()));
     for package in &packages {
         let _ = std::process::Command::new("pnputil")
             .args(["/delete-driver", package, "/uninstall", "/force"])
@@ -340,7 +445,7 @@ fn restore_backend(vid: u16, pid: u16) -> Result<(), String> {
 
 /// Restore the original driver through wdi-simple --uninstall (fallback).
 #[cfg(all(windows, not(feature = "static-libwdi")))]
-fn restore_backend(vid: u16, pid: u16) -> Result<(), String> {
+fn restore_backend(vid: u16, pid: u16, _log: Option<DriverLog>) -> Result<(), String> {
     let wdi = locate_wdi().ok_or_else(missing_wdi_message)?;
     let args = wdi_args(true, vid, pid);
     let code = run_elevated(&wdi, &args)?;
@@ -362,6 +467,7 @@ fn driver_args(operation: &str, vid: u16, pid: u16) -> Vec<String> {
         format!("{vid:04x}"),
         "--pid".to_owned(),
         format!("{pid:04x}"),
+        "--driver-log-append".to_owned(),
     ]
 }
 
@@ -492,7 +598,7 @@ fn run_elevated(exe: &std::path::Path, args: &[String]) -> Result<i32, String> {
         .join(",");
     let script = format!(
         "$p = Start-Process -FilePath {quoted_exe} -ArgumentList {quoted_args} \
-         -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+         -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode"
     );
 
     let status = std::process::Command::new("powershell")
@@ -513,7 +619,13 @@ fn run_elevated(exe: &std::path::Path, args: &[String]) -> Result<i32, String> {
 
 /// Poll until the device can (or can no longer) be opened by libusb.
 #[cfg(windows)]
-fn wait_until(openable: bool, vid: u16, pid: u16, timeout: Duration) -> Result<(), String> {
+fn wait_until(
+    openable: bool,
+    vid: u16,
+    pid: u16,
+    timeout: Duration,
+    _log: &Option<DriverLog>,
+) -> Result<(), String> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         let service = driver_service(vid, pid);

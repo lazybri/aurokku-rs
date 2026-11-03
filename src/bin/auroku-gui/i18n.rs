@@ -136,6 +136,7 @@ pub fn t(text: &str) -> &str {
         "已为 {target} 恢复原始 USB 驱动" => "Restored the original USB driver for {target}",
         "已恢复原始 USB 驱动" => "Restored the original USB driver",
         "驱动操作失败：{message}" => "Driver operation failed: {message}",
+        "驱动日志：{path}" => "Driver log: {path}",
         "上次会话未恢复 {target} 的原始 USB 驱动，可在“最近结果”卡片中恢复" => {
             "The previous session did not restore the original USB driver for {target}; you can restore it from the result card."
         }
