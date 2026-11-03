@@ -9,10 +9,16 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
-use std::ptr::null;
+const WDI_WINUSB: i32 = 0;
+const INF_NAME: &str = "usb_device.inf";
+const WORK_DIR_NAME: &str = "auroku-wdi";
 
 /// Operation completed successfully.
 pub const WDI_SUCCESS: c_int = 0;
+/// Input/output error.
+pub const WDI_ERROR_IO: c_int = -1;
+/// Invalid parameter.
+pub const WDI_ERROR_INVALID_PARAM: c_int = -2;
 /// The calling process is not elevated.
 pub const WDI_ERROR_NEEDS_ADMIN: c_int = -15;
 /// Verbose logging level.
@@ -45,6 +51,20 @@ pub struct WdiOptionsInstallDriver {
     pub pending_install_timeout: u32,
 }
 
+/// C struct wdi_options_prepare_driver (libwdi.h).
+#[repr(C)]
+pub struct WdiOptionsPrepareDriver {
+    /// wdi_driver_type; 0 = WDI_WINUSB.
+    pub driver_type: i32,
+    pub vendor_name: *mut c_char,
+    pub device_guid: *mut c_char,
+    pub disable_cat: i32,
+    pub disable_signing: i32,
+    pub cert_subject: *mut c_char,
+    pub use_wcid_driver: i32,
+    pub external_inf: i32,
+}
+
 #[repr(C)]
 struct TokenElevation {
     token_is_elevated: u32,
@@ -64,6 +84,13 @@ extern "system" {
 }
 
 extern "system" {
+    fn wdi_prepare_driver(
+        device_info: *mut WdiDeviceInfo,
+        path: *const c_char,
+        inf_name: *const c_char,
+        options: *mut WdiOptionsPrepareDriver,
+    ) -> c_int;
+
     fn wdi_install_driver(
         device_info: *mut WdiDeviceInfo,
         path: *const c_char,
@@ -135,6 +162,19 @@ pub fn set_log_level(level: c_int) {
 /// WDI_ERROR_NEEDS_ADMIN and the caller is expected to relaunch elevated.
 pub fn install_winusb(vid: u16, pid: u16) -> Result<(), WdiError> {
     let description = CString::new("auRokku USB device").expect("static description");
+    let vendor = CString::new("auRokku").expect("static vendor");
+    let inf_name = CString::new(INF_NAME).expect("static inf name");
+
+    // libwdi writes the generated INF/CAT here and rejects a NULL path.
+    let work_dir = std::env::temp_dir().join(WORK_DIR_NAME);
+    std::fs::create_dir_all(&work_dir).map_err(|error| WdiError {
+        code: WDI_ERROR_IO,
+        message: format!("cannot create {}: {error}", work_dir.display()),
+    })?;
+    let path = CString::new(work_dir.to_string_lossy().to_string()).map_err(|error| WdiError {
+        code: WDI_ERROR_INVALID_PARAM,
+        message: format!("invalid temporary path: {error}"),
+    })?;
 
     let mut device = WdiDeviceInfo {
         next: std::ptr::null_mut(),
@@ -151,13 +191,36 @@ pub fn install_winusb(vid: u16, pid: u16) -> Result<(), WdiError> {
         driver_version: 0,
     };
 
+    let mut prepare = WdiOptionsPrepareDriver {
+        driver_type: WDI_WINUSB,
+        vendor_name: vendor.as_ptr() as *mut c_char,
+        device_guid: std::ptr::null_mut(),
+        disable_cat: 0,
+        disable_signing: 0,
+        cert_subject: std::ptr::null_mut(),
+        use_wcid_driver: 0,
+        external_inf: 0,
+    };
+
+    // Generate the INF/CAT for this VID/PID first; wdi_install_driver needs the
+    // directory that holds them.
+    let code =
+        unsafe { wdi_prepare_driver(&mut device, path.as_ptr(), inf_name.as_ptr(), &mut prepare) };
+    if code != WDI_SUCCESS {
+        return Err(WdiError {
+            code,
+            message: error_message(code),
+        });
+    }
+
     let mut options = WdiOptionsInstallDriver {
         hwnd: std::ptr::null_mut(),
         install_filter_driver: 0,
         pending_install_timeout: 60_000,
     };
 
-    let code = unsafe { wdi_install_driver(&mut device, null(), null(), &mut options) };
+    let code =
+        unsafe { wdi_install_driver(&mut device, path.as_ptr(), inf_name.as_ptr(), &mut options) };
     if code == WDI_SUCCESS {
         return Ok(());
     }
