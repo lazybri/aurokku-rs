@@ -62,6 +62,23 @@ if ! command -v musl-gcc >/dev/null 2>&1; then
     exit 1
 fi
 
+# Set AUROKU_BUILD_DEBUG=1 (or pass --debug) for an unoptimised build with
+# debug symbols; the CI "debug" branch does this for all three platforms.
+DEBUG_BUILD="${AUROKU_BUILD_DEBUG:-0}"
+for arg in "$@"; do
+    case "$arg" in
+        --debug) DEBUG_BUILD=1 ;;
+    esac
+done
+if [[ "$DEBUG_BUILD" == "1" ]]; then
+    PROFILE_DIR=debug
+    RELEASE_FLAG=()
+    echo "==> debug build (unoptimised, debug symbols)"
+else
+    PROFILE_DIR=release
+    RELEASE_FLAG=(--release)
+fi
+
 TARGET=x86_64-unknown-linux-musl
 
 if command -v rustup >/dev/null 2>&1; then
@@ -118,9 +135,9 @@ export C_INCLUDE_PATH="$PWD/$UAPI_DIR${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
 # self-contained even when musl-gcc only provides Scrt1.o for -static-pie.
 echo "==> cargo build --release --locked --target $TARGET --bin auroku (static)"
 RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C relocation-model=static" \
-    cargo build --release --locked --target "$TARGET" --bin auroku
+    cargo build "${RELEASE_FLAG[@]}" --locked --target "$TARGET" --bin auroku
 
-OUT="target/$TARGET/release/auroku"
+OUT="target/$TARGET/$PROFILE_DIR/auroku"
 
 if ! file "$OUT" | grep -Eq 'statically linked|static-pie linked'; then
     echo "error: $OUT is not a static executable" >&2
@@ -142,11 +159,11 @@ fi
 # A static musl GUI cannot work: winit/glutin load Wayland/X11/OpenGL with
 # dlopen, and static musl does not support dynamic loading. Build the GUI
 # against the host glibc and avoid libudev via PKG_CONFIG=/bin/false.
-echo "==> cargo build --release --locked --features gui --bin auroku-gui (host glibc)"
+echo "==> cargo build ${RELEASE_FLAG[*]} --locked --features gui --bin auroku-gui (host glibc)"
 env -u RUSTFLAGS -u C_INCLUDE_PATH \
-    cargo build --release --locked --features gui --bin auroku-gui
+    cargo build "${RELEASE_FLAG[@]}" --locked --features gui --bin auroku-gui
 
-GUI_OUT="target/release/auroku-gui"
+GUI_OUT="target/$PROFILE_DIR/auroku-gui"
 
 if [[ ! -x "$GUI_OUT" ]]; then
     echo "error: GUI build output not found: $GUI_OUT" >&2

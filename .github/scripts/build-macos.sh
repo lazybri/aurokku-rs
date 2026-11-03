@@ -44,6 +44,7 @@ for arg in "$@"; do
     case "$arg" in
         --universal) MODE=universal ;;
         --native) MODE=native ;;
+        --debug) DEBUG_BUILD=1 ;;
         -h|--help) usage; exit 0 ;;
         *)
             echo "error: unknown argument: $arg" >&2
@@ -52,6 +53,16 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+DEBUG_BUILD="${DEBUG_BUILD:-${AUROKU_BUILD_DEBUG:-0}}"
+if [[ "$DEBUG_BUILD" == "1" ]]; then
+    PROFILE_DIR=debug
+    RELEASE_FLAG=()
+    echo "==> debug build (unoptimised, debug symbols)"
+else
+    PROFILE_DIR=release
+    RELEASE_FLAG=(--release)
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "error: a macOS binary must be built on macOS." >&2
@@ -93,10 +104,10 @@ if [[ "$MODE" == "native" ]]; then
         fi
     fi
 
-    echo "==> cargo build --release --locked --target $TARGET --features gui --bins"
-    cargo build --release --locked --target "$TARGET" --features gui --bins
-    cp "target/$TARGET/release/auroku" "$OUT"
-    cp "target/$TARGET/release/auroku-gui" "$GUI_OUT"
+    echo "==> cargo build ${RELEASE_FLAG[*]} --locked --target $TARGET --features gui --bins"
+    cargo build "${RELEASE_FLAG[@]}" --locked --target "$TARGET" --features gui --bins
+    cp "target/$TARGET/$PROFILE_DIR/auroku" "$OUT"
+    cp "target/$TARGET/$PROFILE_DIR/auroku-gui" "$GUI_OUT"
 else
     TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
     if command -v rustup >/dev/null 2>&1; then
@@ -104,18 +115,18 @@ else
     fi
 
     for target in "${TARGETS[@]}"; do
-        echo "==> cargo build --release --locked --target $target --features gui --bins"
-        cargo build --release --locked --target "$target" --features gui --bins
+        echo "==> cargo build ${RELEASE_FLAG[*]} --locked --target $target --features gui --bins"
+        cargo build "${RELEASE_FLAG[@]}" --locked --target "$target" --features gui --bins
     done
 
-    # Combine both slices. Each slice is already stripped by [profile.release].
+    # Combine both slices.
     lipo -create \
-        "target/${TARGETS[0]}/release/auroku" \
-        "target/${TARGETS[1]}/release/auroku" \
+        "target/${TARGETS[0]}/$PROFILE_DIR/auroku" \
+        "target/${TARGETS[1]}/$PROFILE_DIR/auroku" \
         -output "$OUT"
     lipo -create \
-        "target/${TARGETS[0]}/release/auroku-gui" \
-        "target/${TARGETS[1]}/release/auroku-gui" \
+        "target/${TARGETS[0]}/$PROFILE_DIR/auroku-gui" \
+        "target/${TARGETS[1]}/$PROFILE_DIR/auroku-gui" \
         -output "$GUI_OUT"
 fi
 

@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # Push to the debug branch to build unoptimised binaries with debug symbols
+    # for all three platforms (no release is published).
+    branches: ["debug"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -59,6 +62,9 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: test
     runs-on: ${{ matrix.os }}
+    env:
+      # "debug" branch builds use the dev profile (no --release).
+      AUROKU_BUILD_DEBUG: ${{ github.ref == 'refs/heads/debug' && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -66,16 +72,16 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
             rust_targets: x86_64-pc-windows-msvc
-            asset: dist/auroku-windows-x86_64.zip
+            glob: dist/*.zip
           - name: linux-x86_64
             # 22.04 keeps the dynamically linked GUI compatible with glibc 2.35+.
             os: ubuntu-22.04
             rust_targets: x86_64-unknown-linux-musl
-            asset: auroku-linux-x86_64.tar.gz
+            glob: dist/*.tar.gz
           - name: macos-universal
             os: macos-14
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            asset: auroku-macos-universal.zip
+            glob: dist/*.zip
     steps:
       - uses: actions/checkout@v4
 
@@ -159,29 +165,35 @@ jobs:
           bash .github/scripts/build-macos.sh
           mkdir -p dist/macos-universal
           cp dist/auroku dist/auroku-gui dist/macos-universal/
-          ditto -c -k --keepParent dist/macos-universal auroku-macos-universal.zip
+          SUFFIX=""
+          if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
+          VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          ditto -c -k --keepParent dist/macos-universal \
+            "dist/auroku-macos-universal-${VERSION}${SUFFIX}.zip"
 
       - name: Verify & package (Linux musl)
         if: matrix.name == 'linux-x86_64'
         run: |
-          file target/x86_64-unknown-linux-musl/release/auroku
-          file target/x86_64-unknown-linux-musl/release/auroku \
-            | grep -Eq 'statically linked|static-pie linked'
+          file dist/auroku-linux-x86_64
+          file dist/auroku-linux-x86_64 | grep -Eq 'statically linked|static-pie linked'
           # 必须没有动态解释器，否则 target 上缺少 loader 时无法运行。
-          ! readelf -l target/x86_64-unknown-linux-musl/release/auroku | grep -q 'INTERP'
+          ! readelf -l dist/auroku-linux-x86_64 | grep -q 'INTERP'
           # 必须没有 DT_NEEDED 动态依赖。
-          ! readelf -d target/x86_64-unknown-linux-musl/release/auroku | grep -q 'NEEDED'
+          ! readelf -d dist/auroku-linux-x86_64 | grep -q 'NEEDED'
           # 双重确认没有动态依赖
-          ! ldd target/x86_64-unknown-linux-musl/release/auroku 2>&1 | grep -q '=>'
+          ! ldd dist/auroku-linux-x86_64 2>&1 | grep -q '=>'
           file dist/auroku-gui-linux-x86_64
-          tar -czf auroku-linux-x86_64.tar.gz \
+          SUFFIX=""
+          if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
+          VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          tar -czf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
             -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.asset }}
+          name: ${{ matrix.name }}${{ github.ref == 'refs/heads/debug' && '-debug' || '' }}
+          path: ${{ matrix.glob }}
           if-no-files-found: error
 
   release:

@@ -26,7 +26,10 @@
     dist\auroku-windows-<arch>.zip
 #>
 param(
-    [string]$Target = ""
+    [string]$Target = "",
+    # Unoptimised build with debug symbols (the CI "debug" branch sets
+    # AUROKU_BUILD_DEBUG=1 instead).
+    [switch]$Debug
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,11 +120,23 @@ if ($env:LIBWDI_LIB_DIR -and (Test-Path $env:LIBWDI_LIB_DIR)) {
     Write-Host "==> static libwdi found in $env:LIBWDI_LIB_DIR"
 }
 
-Write-Host "==> cargo build --release --locked --target $Target --features $features --bins (static CRT)"
-cargo build --release --locked --target $Target --features $features --bins
+$debugBuild = $Debug -or ($env:AUROKU_BUILD_DEBUG -eq '1')
+if ($debugBuild) {
+    $profileArgs = @()
+    $profileDir = 'debug'
+    $zipSuffix = '-debug'
+    Write-Host '==> debug build (unoptimised, debug symbols)'
+} else {
+    $profileArgs = @('--release')
+    $profileDir = 'release'
+    $zipSuffix = ''
+}
 
-$built = Join-Path (Get-Location) "target\$Target\release\auroku.exe"
-$builtGui = Join-Path (Get-Location) "target\$Target\release\auroku-gui.exe"
+Write-Host "==> cargo build $($profileArgs -join ' ') --locked --target $Target --features $features --bins (static CRT)"
+cargo build @profileArgs --locked --target $Target --features $features --bins
+
+$built = Join-Path (Get-Location) "target\$Target\$profileDir\auroku.exe"
+$builtGui = Join-Path (Get-Location) "target\$Target\$profileDir\auroku-gui.exe"
 if (-not (Test-Path $built)) {
     throw "Build output not found: $built"
 }
@@ -155,7 +170,8 @@ if (Test-Path $license) {
     Write-Host "License: $licenseCopy"
 }
 
-$zip = Join-Path $distDir "auroku-windows-$arch.zip"
+$version = (Select-String -Path (Join-Path (Get-Location) 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+$zip = Join-Path $distDir "auroku-windows-$arch-v$version$zipSuffix.zip"
 Compress-Archive -Path $archiveItems -DestinationPath $zip -Force
 
 Write-Host ""
