@@ -407,6 +407,25 @@ fn remove_device(vid: u16, pid: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether an INF file mentions the given ASCII marker.
+///
+/// INF files are usually ASCII but may be UTF-16LE (with or without BOM), so
+/// look for both the narrow and the widened byte pattern.
+#[cfg(all(windows, feature = "static-libwdi"))]
+fn inf_mentions(bytes: &[u8], needle: &[u8]) -> bool {
+    if bytes
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+    {
+        return true;
+    }
+
+    let wide: Vec<u8> = needle.iter().flat_map(|byte| [*byte, 0]).collect();
+    bytes
+        .windows(wide.len())
+        .any(|window| window.eq_ignore_ascii_case(&wide))
+}
+
 /// Published OEM packages (oemNN.inf) whose INF targets this VID/PID.
 ///
 /// libwdi generates one package per install attempt, so multiple entries are
@@ -427,10 +446,7 @@ fn driver_packages(vid: u16, pid: u16) -> Vec<String> {
         let Ok(bytes) = std::fs::read(entry.path()) else {
             continue;
         };
-        if bytes
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(&needle))
-        {
+        if inf_mentions(&bytes, &needle) {
             packages.push(entry.file_name().to_string_lossy().into_owned());
         }
     }
