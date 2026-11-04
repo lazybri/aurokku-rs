@@ -1,0 +1,13 @@
+[package]
+name = "auroku-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "no_std (+alloc) protocol core for the auRokku SERI / Type2Auth USB service, shared by the desktop app and the RP2354 firmware"
+
+[dependencies]
+# The protocol layer only needs MD5 (Type2Auth) and hex encoding. Both are
+# io/alloc free once their default `std` feature is disabled.
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+md-5 = { version = "0.10", default-features = false }

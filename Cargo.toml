@@ -1,52 +1,10 @@
-[package]
-name = "auroku"
-version = "0.3.2"
-edition = "2021"
-rust-version = "1.88"
-description = "SERI / Type2Auth USB device service tool (Rust port of auRokku.py)"
-license = "MIT"
-
-[features]
-default = []
-# Build the egui/eframe Material 3 front-end:
-#   cargo run --release --features gui --bin auroku-gui
-gui = ["dep:eframe"]
-# Link the static libwdi built by CI (Windows only, see docs/windows-driver.md):
-#   cargo build --release --features gui,static-libwdi
-static-libwdi = ["dep:libwdi-sys"]
-
-[[bin]]
-name = "auroku"
-path = "src/main.rs"
-
-[[bin]]
-name = "auroku-gui"
-path = "src/bin/auroku-gui/main.rs"
-required-features = ["gui"]
-
-[dependencies]
-clap = { version = "4.5", features = ["derive"] }
-eframe = { version = "0.33", optional = true }
-hex = "0.4"
-md-5 = "0.10"
-rusb = { version = "0.9", features = ["vendored"] }
-serde_json = { version = "1", features = ["preserve_order"] }
-
-[target.'cfg(windows)'.dependencies]
-# Static libwdi bindings + link rules, shared with qt6 through the orphan
-# libwdi-static branch and pinned by an immutable tag (see
-# https://github.com/lazybri/aurokku-rs/tree/libwdi-static). The crate is
-# optional: only the static-libwdi feature pulls it in, and its build script
-# links the artifact exported through LIBWDI_LIB_DIR.
-libwdi-sys = { git = "https://github.com/lazybri/aurokku-rs", tag = "libwdi-1.5.1-x64-r1", optional = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# Safe effective-UID check to prevent the Linux GUI from running as root.
-rustix = { version = "1", features = ["process"] }
-
 [workspace]
-# The libwdi bindings live on the libwdi-static branch and are consumed as a git
-# tag dependency, so the workspace has a single member: this root package.
+# rp2354 is the RP2354 firmware branch: the desktop application lives on the
+# `main` / `qt6` branches. Members:
+# - crates/auroku-core:     no_std + alloc protocol core (shared with desktop)
+# - firmware/auroku-firmware: RP2354 firmware logic, host-testable with mocks
+members = ["crates/auroku-core", "firmware/auroku-firmware"]
+resolver = "2"
 
 [profile.release]
 lto = true

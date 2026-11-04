@@ -1,6 +1,10 @@
-# Static-only builds.
-[target.x86_64-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static", "-C", "relocation-model=static"]
-
-[target.'cfg(windows)']
-rustflags = ["-C", "target-feature=+crt-static"]
+# RP2354 firmware workspace.
+#
+# The firmware logic (UI, protocol task, HAL abstractions) is host-tested with
+# mocks; the Cortex-M33 build only needs the `thumbv8m.main-none-eabihf` target.
+#
+# Flashing/debugging will go through probe-rs + SWD once the RP2354 board exists
+# (docs/plan/07 §3.3). The runner can be enabled when the board is available:
+#
+# [target.thumbv8m.main-none-eabihf]
+# runner = "probe-rs run --chip RP2350"

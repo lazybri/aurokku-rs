@@ -1,239 +1,38 @@
-name: Release
+name: firmware-ci
+
+# rp2354 branch CI: host-side mock tests + Cortex-M33 cross build.
+# (The desktop release pipeline lives on main/qt6 and is intentionally absent.)
 
 on:
-  # Every commit builds debug binaries for all three platforms and only uploads
-  # them as workflow artifacts (never to the Releases page).
   push:
-    branches: ["**"]
-    tags-ignore: ["**"]
   pull_request:
-  # Releases are published manually only, through this dispatch.
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "构建类型：release 发布会传到 Releases；debug 只上传 Actions 构件"
-        type: choice
-        options:
-          - release
-          - debug
-        default: release
-      version:
-        description: "发布版本号（仅 release，如 v0.3.1；省略 v 会自动补全）"
-        required: false
-        type: string
-      prerelease:
-        description: "标记为预发布"
-        required: false
-        type: boolean
-        default: false
-      draft:
-        description: "保存为草稿"
-        required: false
-        type: boolean
-        default: false
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Format, lint & test
+  host-tests:
+    name: Host tests (mock firmware)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
+      - name: rustfmt
         run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace --all-targets
 
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Unit tests
-        run: cargo test --all-targets
-
-  # Build the static libwdi once per run through the reusable, tag-pinned
-  # pipeline on the orphan libwdi-static branch, then hand the artifact to the
-  # Windows build job. The tag is immutable: upgrading libwdi means publishing a
-  # new tag in that branch (libwdi-<upstream>-x64-r<N>) and changing it here.
-  libwdi:
-    name: Build static libwdi
-    if: github.event_name != 'pull_request'
-    # The reusable workflow is statically validated against the permissions
-    # granted here. Its tag-only "release" job declares contents: write, so the
-    # call job must grant it even though that job never runs for branch pushes
-    # (it is gated on refs/tags/libwdi-*). Narrow as much as the validator allows.
-    permissions:
-      contents: write
-    uses: lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@libwdi-1.5.1-x64-r1
-    with:
-      libwdi-sha: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
-      libwdi-ref: libwdi-1.5.1-x64-r1
-
-  # 一次运行内并行构建所有平台；发布 job 汇总产物后直接创建 Release。
-  build:
-    name: Build ${{ matrix.name }}
-    if: github.event_name != 'pull_request'
-    needs: [test, libwdi]
-    runs-on: ${{ matrix.os }}
-    env:
-      # Commit pushes (and manual dispatch with mode=debug) build the dev profile.
-      AUROKU_BUILD_DEBUG: ${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '1' || '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: windows-x86_64
-            os: windows-latest
-            rust_targets: x86_64-pc-windows-msvc
-            glob: dist/*.zip
-          - name: linux-x86_64
-            # 22.04 keeps the dynamically linked GUI compatible with glibc 2.35+.
-            os: ubuntu-22.04
-            rust_targets: x86_64-unknown-linux-musl
-            glob: dist/*.tar.gz
-          - name: macos-universal
-            os: macos-14
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            glob: dist/*.zip
+  firmware-target:
+    name: Cortex-M33 build (thumbv8m.main-none-eabihf)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install musl toolchain and Linux UAPI headers
-        if: matrix.name == 'linux-x86_64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools linux-libc-dev
-
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_targets }}
-
-      - uses: Swatinem/rust-cache@v2
-
-      # The MSVC toolset environment is still useful for cargo's MSVC target
-      # (link.exe) and for dumpbin. libwdi itself is no longer built here.
-      - uses: microsoft/setup-msbuild@v2
-        if: matrix.name == 'windows-x86_64'
-
-      # The static libwdi is produced once per run by the reusable, tag-pinned
-      # pipeline on the orphan libwdi-static branch (see its README.md for the
-      # artifact contract). Nothing in this repository builds libwdi anymore:
-      # no WDK download, no upstream clone, no msbuild targets.
-      - name: Download the pinned static libwdi artifact
-        if: matrix.name == 'windows-x86_64'
-        uses: actions/download-artifact@v4
-        with:
-          name: libwdi-static
-          path: libwdi-out
-
-      - name: Expose LIBWDI_LIB_DIR
-        if: matrix.name == 'windows-x86_64'
-        shell: pwsh
-        run: |
-          $libDir = Join-Path $PWD 'libwdi-out/lib'
-          if (-not (Test-Path (Join-Path $libDir 'libwdi.lib'))) {
-            throw 'libwdi-out/lib/libwdi.lib is missing: the libwdi job did not provide the artifact'
-          }
-          "LIBWDI_LIB_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "==> LIBWDI_LIB_DIR=$libDir"
-
-      - name: Build & package (Windows, static CRT + static libwdi)
-        if: matrix.name == 'windows-x86_64'
-        shell: pwsh
-        run: ./.github/scripts/build-windows.ps1 -Target ${{ matrix.rust_targets }}
-
-      - name: Build (Linux musl, fully static)
-        if: matrix.name == 'linux-x86_64'
-        run: |
-          chmod +x .github/scripts/build-linux.sh
-          ./.github/scripts/build-linux.sh
-
-      - name: Build & package (macOS universal)
-        if: matrix.name == 'macos-universal'
-        run: |
-          bash .github/scripts/build-macos.sh
-          mkdir -p dist/macos-universal
-          cp dist/auroku dist/auroku-gui dist/macos-universal/
-          SUFFIX=""
-          if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
-          VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          ditto -c -k --keepParent dist/macos-universal \
-            "dist/auroku-macos-universal-${VERSION}${SUFFIX}.zip"
-
-      - name: Verify & package (Linux musl)
-        if: matrix.name == 'linux-x86_64'
-        run: |
-          file dist/auroku-linux-x86_64
-          file dist/auroku-linux-x86_64 | grep -Eq 'statically linked|static-pie linked'
-          # 必须没有动态解释器，否则 target 上缺少 loader 时无法运行。
-          ! readelf -l dist/auroku-linux-x86_64 | grep -q 'INTERP'
-          # 必须没有 DT_NEEDED 动态依赖。
-          ! readelf -d dist/auroku-linux-x86_64 | grep -q 'NEEDED'
-          # 双重确认没有动态依赖
-          ! ldd dist/auroku-linux-x86_64 2>&1 | grep -q '=>'
-          file dist/auroku-gui-linux-x86_64
-          SUFFIX=""
-          if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
-          VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          tar -czf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
-            -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '-debug' || '' }}
-          path: ${{ matrix.glob }}
-          if-no-files-found: error
-
-  release:
-    name: Publish GitHub release
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Resolve release tag
-        id: tag
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          tag="$INPUT_VERSION"
-          if [ -z "$tag" ]; then
-            echo "::error::release 模式必须填写 version（例如 v0.3.1）"
-            exit 1
-          fi
-          case "$tag" in
-            v*) ;;
-            *) tag="v$tag" ;;
-          esac
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
-          files: artifacts/*
-          generate_release_notes: true
-          draft: ${{ inputs.draft || false }}
-          prerelease: ${{ inputs.prerelease || false }}
-
-
+          targets: thumbv8m.main-none-eabihf
+      - name: protocol core
+        run: cargo build -p auroku-core --target thumbv8m.main-none-eabihf --release
+      - name: firmware logic
+        run: cargo build -p auroku-firmware --target thumbv8m.main-none-eabihf --release

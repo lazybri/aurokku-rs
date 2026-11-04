@@ -1,0 +1,10 @@
+[package]
+name = "auroku-firmware"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "RP2354 firmware logic for auRokku: protocol task, OLED menu UI and HAL abstractions (host-testable with mocks)"
+
+[dependencies]
+auroku-core = { path = "../../crates/auroku-core" }
