@@ -41,7 +41,7 @@
     Companion registry file: disable-usbser.reg
     Documentation: docs/windows-disable-usbser.md
 #>
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
     [ValidateSet('Status', 'Disable', 'Restore')]
     [string]$Action = 'Status',
