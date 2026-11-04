@@ -52,8 +52,9 @@
 | 11 | `docs/plan/11-session-context.md` | docs/context | RP2354 研究拆分与结论 |
 | 12 | `docs/plan/12-session-context.md` | docs/context | 00–05 执行记录（libwdi / 0.3.2 / qt6） |
 | 13 | `docs/plan/13-session-rules.md` | **rp2354** | 本文件（工作规则） |
+| 14 | `docs/plan/14-session-context.md` | **rp2354** | 会话上下文：去桌面端 + 固件 workspace + rp2350-emu 框架 |
 
-> 说明：本文件占用编号 13；用户之后人工要求留存的会话上下文文档应顺延为 14、15……。
+> 说明：本文件占用编号 13；14 号已用于本次会话上下文，之后用户人工要求留存的上下文文档顺延为 15、16……。
 
 ---
 

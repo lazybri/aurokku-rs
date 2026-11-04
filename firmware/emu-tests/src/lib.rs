@@ -97,8 +97,7 @@ impl EmuOutcome {
 /// Default vendored bootrom path (repo-relative, resolves at compile time so the
 /// harness works from any current directory).
 pub fn default_bootrom_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../rp2354-emu-fw/rom/bootrom-combined.bin")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../rp2354-emu-fw/rom/bootrom-combined.bin")
 }
 
 /// Load the firmware flash image into a fresh emulator and point the core at the

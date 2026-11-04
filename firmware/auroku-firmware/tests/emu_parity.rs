@@ -19,8 +19,7 @@ fn read_uimlk_transport() -> MockTransport {
     challenge_frame[1..].copy_from_slice(&encode_nibbles(&challenge));
 
     let (material, _sn) = parse_sn_to_type2auth("SKYKA077394").expect("SN material");
-    let auth_frame =
-        compute_type2auth_request("uimlk", &challenge, &material).expect("auth frame");
+    let auth_frame = compute_type2auth_request("uimlk", &challenge, &material).expect("auth frame");
 
     let state_frame = [0x74u8, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 

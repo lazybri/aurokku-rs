@@ -45,7 +45,10 @@ fn run_and_check(scenario: u32) -> EmuOutcome {
 #[test]
 fn allocator_and_vec_work_on_emulated_rp2354() {
     let outcome = run_and_check(SCENARIO_ALLOC);
-    assert_ne!(outcome.hash, 0, "alloc scenario should report a non-zero hash");
+    assert_ne!(
+        outcome.hash, 0,
+        "alloc scenario should report a non-zero hash"
+    );
 }
 
 #[test]

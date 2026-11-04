@@ -41,7 +41,13 @@ fn main() {
                 core.regs.r[2],
                 core.regs.r[3],
             ];
-            history.push((cycles, core.regs.pc(), core.regs.lr(), core.regs.r[13], regs));
+            history.push((
+                cycles,
+                core.regs.pc(),
+                core.regs.lr(),
+                core.regs.r[13],
+                regs,
+            ));
             if history.len() > 60_000 {
                 history.remove(0);
             }
@@ -111,14 +117,18 @@ fn main() {
 
         if core.is_halted() {
             let sp = core.regs.r[13];
-            println!("HALTED (IPSR={}): stacked frame at 0x{sp:08x}", core.regs.xpsr & 0x1ff);
-            for (index, label) in [
-                "r0", "r1", "r2", "r3", "r12", "lr", "pc", "xpsr",
-            ]
-            .iter()
-            .enumerate()
+            println!(
+                "HALTED (IPSR={}): stacked frame at 0x{sp:08x}",
+                core.regs.xpsr & 0x1ff
+            );
+            for (index, label) in ["r0", "r1", "r2", "r3", "r12", "lr", "pc", "xpsr"]
+                .iter()
+                .enumerate()
             {
-                println!("  {label:>4} = 0x{:08x}", emulator.peek(sp + (index as u32) * 4));
+                println!(
+                    "  {label:>4} = 0x{:08x}",
+                    emulator.peek(sp + (index as u32) * 4)
+                );
             }
             for (label, addr) in [
                 ("CFSR", 0xE000_ED28u32),
