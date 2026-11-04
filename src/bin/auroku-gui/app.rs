@@ -99,6 +99,7 @@ enum Confirm {
     ResetPin,
     WriteUim { value: String, control: u8 },
     MaintenanceBit { control: u8 },
+    DisableUsbSer,
 }
 
 fn device_key(device: &DeviceSummary) -> (u16, u16, u8, u8) {
@@ -106,7 +107,13 @@ fn device_key(device: &DeviceSummary) -> (u16, u16, u8, u8) {
 }
 
 /// One-line label for the device picker: human name, IDs and bus location.
+///
+/// Devices found only through the Windows PnP fallback have no libusb
+/// bus/address (0:0); label them as PnP instead of showing a fake location.
 fn device_label(device: &DeviceSummary) -> String {
+    if device.bus == 0 && device.address == 0 {
+        return format!("{} · {} · PnP", device.display_name(), device.id_string());
+    }
     format!(
         "{} · {} · {:03}:{:03}",
         device.display_name(),
@@ -123,6 +130,7 @@ impl Confirm {
             Confirm::ResetPin => i18n::t("重置手机锁码？"),
             Confirm::WriteUim { .. } => i18n::t("写入 UIM 锁绑定？"),
             Confirm::MaintenanceBit { .. } => i18n::t("设置维护模式位？"),
+            Confirm::DisableUsbSer => i18n::t("禁用 usbser.sys 内核服务？"),
         }
     }
 
@@ -143,6 +151,12 @@ impl Confirm {
                 "通过 0xE1 服务 + auth 4000 写入 NV 10481，control = {control}。此操作会切换维护模式位。",
                 &[("control", &control.to_string())],
             ),
+            Confirm::DisableUsbSer => i18n::t(
+                "将把 usbser.sys 的 Start 改为 4（DISABLED），并保存原值以便恢复。\
+                 这会停用本机所有 CDC 串口设备(COM 口)，只建议在测试机使用；\
+                 执行后需要重启或重新插拔设备。",
+            )
+            .to_owned(),
         }
     }
 
@@ -152,6 +166,7 @@ impl Confirm {
             Confirm::ResetPin => i18n::t("重置 PIN"),
             Confirm::WriteUim { .. } => i18n::t("写入"),
             Confirm::MaintenanceBit { .. } => i18n::t("应用"),
+            Confirm::DisableUsbSer => i18n::t("禁用 usbser.sys"),
         }
     }
 }
@@ -544,6 +559,36 @@ impl AurokuApp {
                 Event::DriverStatus { vid, pid, service } => {
                     self.driver_status_cache = Some((vid, pid, service));
                 }
+                Event::UsbSerService { operation, result } => {
+                    self.busy = false;
+                    self.busy_label.clear();
+                    match result {
+                        Ok(()) => {
+                            let message = if operation == "disable" {
+                                i18n::t("已禁用 usbser.sys，请重启或重新插拔设备")
+                            } else {
+                                i18n::t("已恢复 usbser.sys，请重启或重新插拔设备")
+                            };
+                            self.log(message.to_owned());
+                            self.notify(message, Tone::Success);
+                            self.refresh_device_list();
+                            self.force_driver_status_query();
+                        }
+                        Err(message) => {
+                            self.log(i18n::tf(
+                                "usbser.sys 操作失败：{message}",
+                                &[("message", &message)],
+                            ));
+                            self.notify(
+                                i18n::tf(
+                                    "usbser.sys 操作失败：{message}",
+                                    &[("message", &message)],
+                                ),
+                                Tone::Error,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -624,7 +669,10 @@ impl AurokuApp {
         config.usb_location = self
             .selected_device
             .and_then(|index| self.devices.get(index))
-            .map(|device| (device.bus, device.address));
+            .map(|device| (device.bus, device.address))
+            // PnP-only entries have no libusb bus/address; do not use (0, 0)
+            // as a location filter or the device will never be found.
+            .filter(|(bus, address)| *bus != 0 || *address != 0);
         config.sn = {
             let sn = self.sn_text.trim();
             if sn.is_empty() {
@@ -707,6 +755,23 @@ impl AurokuApp {
         self.worker.send(Request::RestoreDriver { vid, pid });
     }
 
+    /// Disable/restore the usbser.sys kernel service (Windows testing helper).
+    fn run_usbser_service(&mut self, action: &'static str) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        if action == "disable" {
+            self.busy_label = i18n::t("正在禁用 usbser.sys…").to_owned();
+            self.log(i18n::t("正在禁用 usbser.sys（需要管理员确认）…").to_owned());
+            self.worker.send(Request::DisableUsbSer);
+        } else {
+            self.busy_label = i18n::t("正在恢复 usbser.sys…").to_owned();
+            self.log(i18n::t("正在恢复 usbser.sys（需要管理员确认）…").to_owned());
+            self.worker.send(Request::RestoreUsbSer);
+        }
+    }
+
     /// Driver install/restore (and some phones leaving service mode) re-enumerate
     /// the USB device, so the selected device's cached bus address is stale.
     /// Clear it (later operations then match by VID/PID instead of bus/address)
@@ -747,6 +812,7 @@ impl AurokuApp {
             Confirm::MaintenanceBit { control } => {
                 self.start(Task::MaintenanceBit { control }, "设置维护模式位")
             }
+            Confirm::DisableUsbSer => self.run_usbser_service("disable"),
         }
     }
 
@@ -1379,6 +1445,8 @@ impl AurokuApp {
         let mut restore = false;
         let mut refresh = false;
         let mut copy_log = false;
+        let mut disable_usbser = false;
+        let mut restore_usbser = false;
 
         card(ui, &s, |ui| {
             card_header(
@@ -1478,6 +1546,44 @@ impl AurokuApp {
                 }
             });
 
+            ui.add_space(8.0);
+            banner(
+                ui,
+                &s,
+                Icon::Warning,
+                "会无限重启的品牌可先临时禁用 usbser.sys（Start=4）再安装 WinUSB；\
+                 会停用本机所有 CDC 串口设备，仅建议在测试机使用。",
+                Tone::Warning,
+            );
+            ui.horizontal_wrapped(|ui| {
+                if button(
+                    ui,
+                    &s,
+                    Some(Icon::Warning),
+                    "禁用 usbser.sys（测试）",
+                    ButtonKind::Text,
+                    !self.busy,
+                    0.0,
+                )
+                .clicked()
+                {
+                    disable_usbser = true;
+                }
+                if button(
+                    ui,
+                    &s,
+                    Some(Icon::Refresh),
+                    "恢复 usbser.sys",
+                    ButtonKind::Text,
+                    !self.busy,
+                    0.0,
+                )
+                .clicked()
+                {
+                    restore_usbser = true;
+                }
+            });
+
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 switch(ui, &s, &mut self.restore_driver_on_exit);
@@ -1527,6 +1633,12 @@ impl AurokuApp {
         if copy_log {
             ui.ctx().copy_text(log_path);
             self.notify(i18n::t("驱动日志路径已复制到剪贴板"), Tone::Success);
+        }
+        if disable_usbser {
+            self.confirm = Some(Confirm::DisableUsbSer);
+        }
+        if restore_usbser {
+            self.run_usbser_service("restore");
         }
     }
 

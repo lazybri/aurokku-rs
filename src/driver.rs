@@ -366,6 +366,226 @@ pub fn restore(
     Err("WinUSB driver installation is only supported on Windows".to_owned())
 }
 
+// --------------------------------------------------------------------------
+// usbser.sys service control (testing helper)
+// --------------------------------------------------------------------------
+
+/// Original `Start` value saved before disabling the usbser.sys service.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsbSerRecord {
+    pub start: u32,
+    pub disabled_at: u64,
+}
+
+impl UsbSerRecord {
+    fn to_json(&self) -> Value {
+        json!({
+            "start": self.start,
+            "disabled_at": self.disabled_at,
+        })
+    }
+
+    fn from_json(value: &Value) -> Option<Self> {
+        Some(Self {
+            start: u32::try_from(value.get("start")?.as_u64()?).ok()?,
+            disabled_at: value.get("disabled_at")?.as_u64()?,
+        })
+    }
+}
+
+fn usbser_record_path() -> PathBuf {
+    state_dir().join("usbser-state.json")
+}
+
+fn load_usbser_record() -> Option<UsbSerRecord> {
+    let text = fs::read_to_string(usbser_record_path()).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    UsbSerRecord::from_json(&value)
+}
+
+fn save_usbser_record(record: &UsbSerRecord) -> Result<(), String> {
+    let path = usbser_record_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    let text = serde_json::to_string_pretty(&record.to_json())
+        .map_err(|error| format!("cannot encode usbser state: {error}"))?;
+    fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+fn clear_usbser_record() {
+    let _ = fs::remove_file(usbser_record_path());
+}
+
+/// Current `Start` value of the usbser.sys kernel service.
+///
+/// 2 = AUTO_START, 3 = DEMAND_START (Windows default), 4 = DISABLED.
+#[cfg(windows)]
+pub fn usbser_start() -> Option<u32> {
+    use std::os::windows::process::CommandExt;
+
+    let output = std::process::Command::new("reg")
+        .args([
+            "query",
+            "HKLM\\SYSTEM\\CurrentControlSet\\Services\\usbser",
+            "/v",
+            "Start",
+        ])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        if parts.next() != Some("Start") || parts.next() != Some("REG_DWORD") {
+            continue;
+        }
+        let value = parts.next()?.trim_start_matches("0x");
+        return u32::from_str_radix(value, 16).ok();
+    }
+    None
+}
+
+/// Non-Windows stub: the usbser service only exists on Windows.
+#[cfg(not(windows))]
+pub fn usbser_start() -> Option<u32> {
+    None
+}
+
+#[cfg(windows)]
+fn set_usbser_start(value: u32) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    let status = std::process::Command::new("reg")
+        .args([
+            "add",
+            "HKLM\\SYSTEM\\CurrentControlSet\\Services\\usbser",
+            "/v",
+            "Start",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            &value.to_string(),
+            "/f",
+        ])
+        .creation_flags(0x0800_0000)
+        .status()
+        .map_err(|error| format!("cannot run reg.exe: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "reg.exe failed to set usbser Start={value} (elevation denied?)"
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn set_usbser_start(_value: u32) -> Result<(), String> {
+    Err("usbser.sys is only available on Windows".to_owned())
+}
+
+/// Whether the current process has administrator rights.
+#[cfg(windows)]
+fn is_elevated() -> bool {
+    use std::os::windows::process::CommandExt;
+
+    static ELEVATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ELEVATED.get_or_init(|| {
+        let script = "([Security.Principal.WindowsPrincipal]\
+                      [Security.Principal.WindowsIdentity]::GetCurrent())\
+                      .IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)";
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(0x0800_0000)
+            .output()
+            .ok()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case("true")
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Disable the usbser.sys kernel service (Start=4), saving its previous value.
+///
+/// Requires one UAC prompt when the GUI/CLI is not already elevated. A reboot or
+/// a device re-enumeration is needed for the change to take effect.
+#[cfg(windows)]
+pub fn disable_usbser(log: Option<DriverLog>, append_log: bool) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    if !append_log {
+        reset_log("disable-usbser");
+    }
+    if !is_elevated() {
+        emit(&log, "需要管理员权限，正在请求 UAC 确认…");
+        return elevate_self(&driver_args("disable-usbser", 0, 0));
+    }
+
+    let current = usbser_start().ok_or_else(|| {
+        "cannot read HKLM\\SYSTEM\\CurrentControlSet\\Services\\usbser".to_owned()
+    })?;
+    if current != 4 {
+        if load_usbser_record().is_none() {
+            save_usbser_record(&UsbSerRecord {
+                start: current,
+                disabled_at: now_unix(),
+            })?;
+        }
+        set_usbser_start(4)?;
+    }
+    let _ = std::process::Command::new("sc")
+        .args(["stop", "usbser"])
+        .creation_flags(0x0800_0000)
+        .output();
+
+    emit(
+        &log,
+        "usbser.sys 已禁用（Start=4）；请重启 Windows 或重新插拔设备",
+    );
+    Ok(())
+}
+
+/// Disable the usbser.sys kernel service (non-Windows stub).
+#[cfg(not(windows))]
+pub fn disable_usbser(_log: Option<DriverLog>, _append_log: bool) -> Result<(), String> {
+    Err("usbser.sys service control is only supported on Windows".to_owned())
+}
+
+/// Restore the saved usbser.sys Start value (default 3 if no backup exists).
+#[cfg(windows)]
+pub fn restore_usbser(log: Option<DriverLog>, append_log: bool) -> Result<(), String> {
+    if !append_log {
+        reset_log("restore-usbser");
+    }
+    if !is_elevated() {
+        emit(&log, "需要管理员权限，正在请求 UAC 确认…");
+        return elevate_self(&driver_args("restore-usbser", 0, 0));
+    }
+
+    let target = load_usbser_record().map(|record| record.start).unwrap_or(3);
+    if target == 4 {
+        return Err("saved usbser Start value is 4 (disabled); refusing to restore".to_owned());
+    }
+    set_usbser_start(target)?;
+    clear_usbser_record();
+    emit(
+        &log,
+        format!("usbser.sys 已恢复为 Start={target}；请重启 Windows 或重新插拔设备"),
+    );
+    Ok(())
+}
+
+/// Restore the usbser.sys Start value (non-Windows stub).
+#[cfg(not(windows))]
+pub fn restore_usbser(_log: Option<DriverLog>, _append_log: bool) -> Result<(), String> {
+    Err("usbser.sys service control is only supported on Windows".to_owned())
+}
+
 #[cfg(all(windows, not(feature = "static-libwdi")))]
 fn wdi_args(uninstall: bool, vid: u16, pid: u16) -> Vec<String> {
     let mut args = vec![
@@ -458,7 +678,7 @@ fn restore_backend(vid: u16, pid: u16, _log: Option<DriverLog>) -> Result<(), St
 }
 
 /// Command line for re-running ourselves elevated: auroku --op install-driver ...
-#[cfg(all(windows, feature = "static-libwdi"))]
+#[cfg(windows)]
 fn driver_args(operation: &str, vid: u16, pid: u16) -> Vec<String> {
     vec![
         "--op".to_owned(),
@@ -473,7 +693,7 @@ fn driver_args(operation: &str, vid: u16, pid: u16) -> Vec<String> {
 
 /// Relaunch the CLI elevated and wait for it: exactly one UAC prompt, no
 /// PowerShell window, and the UAC dialog names auroku.exe.
-#[cfg(all(windows, feature = "static-libwdi"))]
+#[cfg(windows)]
 fn elevate_self(args: &[String]) -> Result<(), String> {
     let current =
         std::env::current_exe().map_err(|error| format!("cannot locate executable: {error}"))?;

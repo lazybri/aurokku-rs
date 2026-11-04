@@ -59,6 +59,10 @@ pub enum Request {
         vid: u16,
         pid: u16,
     },
+    /// Disable the usbser.sys kernel service (Windows only, testing helper).
+    DisableUsbSer,
+    /// Restore the saved usbser.sys Start value (Windows only).
+    RestoreUsbSer,
     Shutdown,
 }
 
@@ -95,6 +99,11 @@ pub enum Event {
         vid: u16,
         pid: u16,
         service: Option<String>,
+    },
+    /// Outcome of a usbser.sys service action.
+    UsbSerService {
+        operation: &'static str,
+        result: Result<(), String>,
     },
 }
 
@@ -194,6 +203,20 @@ impl Worker {
                         Request::DriverStatus { vid, pid } => {
                             let service = driver::driver_service(vid, pid);
                             let _ = thread_events.send(Event::DriverStatus { vid, pid, service });
+                        }
+                        Request::DisableUsbSer => {
+                            let result = driver::disable_usbser(None, false);
+                            let _ = thread_events.send(Event::UsbSerService {
+                                operation: "disable",
+                                result,
+                            });
+                        }
+                        Request::RestoreUsbSer => {
+                            let result = driver::restore_usbser(None, false);
+                            let _ = thread_events.send(Event::UsbSerService {
+                                operation: "restore",
+                                result,
+                            });
                         }
                         Request::Shutdown => break,
                     }

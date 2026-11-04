@@ -2170,6 +2170,124 @@ fn powershell_device_strings(vid: u16, pid: u16) -> Option<(Option<String>, Opti
         Some((product, manufacturer))
     }
 }
+/// Parse a Windows PnP instance ID such as
+/// `USB\VID_0FCE&PID_D0FD\07710542464F5353` into VID/PID/serial.
+#[cfg(windows)]
+fn parse_usb_instance_id(instance_id: &str) -> Option<(u16, u16, Option<String>)> {
+    let mut parts = instance_id.split('\\');
+    if parts.next()? != "USB" {
+        return None;
+    }
+    let ids = parts.next()?;
+    let mut fields = ids.split('&');
+    let vid = u16::from_str_radix(fields.next()?.strip_prefix("VID_")?, 16).ok()?;
+    let pid = u16::from_str_radix(fields.next()?.strip_prefix("PID_")?, 16).ok()?;
+    if fields.next().is_some() {
+        // Composite child (VID_x&PID_y&MI_zz): not a physical device entry.
+        return None;
+    }
+    let serial = parts
+        .next()
+        .filter(|value| !value.is_empty() && !value.contains('&'))
+        .map(|value| value.to_ascii_uppercase());
+    Some((vid, pid, serial))
+}
+
+/// Devices that Windows sees in the PnP tree but libusb cannot enumerate.
+///
+/// A device whose function driver is missing/disabled (for example after
+/// `usbser.sys` is disabled) has no openable device interface, so libusb skips
+/// it. The GUI still needs its VID/PID to select it and install WinUSB from the
+/// resident driver card, therefore enumerate present PnP entries as a fallback.
+///
+/// These entries carry `bus = 0` / `address = 0` because libusb did not give a
+/// bus location; the GUI must not use that pair as a `usb_location` filter.
+#[cfg(windows)]
+fn pnp_usb_devices(
+    filter_vid: Option<u16>,
+    filter_pid: Option<u16>,
+    known: &[DeviceSummary],
+) -> Vec<DeviceSummary> {
+    use std::os::windows::process::CommandExt;
+
+    let script = r#"[Console]::OutputEncoding=[Text.Encoding]::UTF8
+Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+  Where-Object { $_.InstanceId -like 'USB\VID_*' -and $_.InstanceId -notlike '*&MI_*' } |
+  ForEach-Object {
+    [pscustomobject]@{
+      InstanceId = $_.InstanceId
+      FriendlyName = [string]$_.FriendlyName
+      Manufacturer = [string]$_.Manufacturer
+    }
+  } | ConvertTo-Json -Compress"#;
+
+    let Ok(output) = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(0x0800_0000)
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return Vec::new();
+    };
+    let items = match value {
+        Value::Array(items) => items,
+        other => vec![other],
+    };
+
+    let mut out: Vec<DeviceSummary> = Vec::new();
+    for item in items {
+        let Some(instance_id) = item.get("InstanceId").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((vid, pid, serial)) = parse_usb_instance_id(instance_id) else {
+            continue;
+        };
+        if filter_vid.is_some_and(|value| value != vid)
+            || filter_pid.is_some_and(|value| value != pid)
+        {
+            continue;
+        }
+        if known
+            .iter()
+            .any(|device| device.vid == vid && device.pid == pid)
+        {
+            continue;
+        }
+        if out
+            .iter()
+            .any(|device| device.vid == vid && device.pid == pid && device.serial == serial)
+        {
+            continue;
+        }
+
+        let text_value = |key: &str| {
+            item.get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        };
+        out.push(DeviceSummary {
+            vid,
+            pid,
+            bus: 0,
+            address: 0,
+            manufacturer: text_value("Manufacturer"),
+            product: text_value("FriendlyName"),
+            serial,
+        });
+    }
+    out
+}
+
 /// Enumerate USB devices, optionally filtered by VID/PID.
 ///
 /// String descriptors are only read when the platform allows it; a permission
@@ -2250,7 +2368,15 @@ pub fn scan_devices(
         out.push(summary);
     }
 
-    out.sort_by_key(|device| (device.bus, device.address));
+    // PnP-only fallback entries (bus/address 0) come after devices with a real
+    // libusb bus location.
+    #[cfg(windows)]
+    {
+        let pnp = pnp_usb_devices(filter_vid, filter_pid, &out);
+        out.extend(pnp);
+    }
+
+    out.sort_by_key(|device| (device.bus == 0, device.bus, device.address));
     Ok(out)
 }
 
@@ -2352,6 +2478,12 @@ enum Op {
     /// Restore the original driver (Windows only)
     #[value(name = "restore-driver")]
     RestoreDriver,
+    /// Disable the usbser.sys kernel service (Windows only, testing helper)
+    #[value(name = "disable-usbser")]
+    DisableUsbSer,
+    /// Restore the saved usbser.sys Start value (Windows only)
+    #[value(name = "restore-usbser")]
+    RestoreUsbSer,
 }
 
 impl Op {
@@ -2371,6 +2503,8 @@ impl Op {
             Op::Exit => "exit",
             Op::InstallDriver => "install-driver",
             Op::RestoreDriver => "restore-driver",
+            Op::DisableUsbSer => "disable-usbser",
+            Op::RestoreUsbSer => "restore-usbser",
         }
     }
 }
@@ -2733,6 +2867,15 @@ fn print_human_report(op: &str, result: &Value) {
                 str_field(result, "pid")
             );
         }
+        "disable-usbser" | "restore-usbser" => {
+            println!(
+                "  usbser.sys    : Start={}",
+                result
+                    .get("start")
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".to_owned())
+            );
+        }
         _ => {}
     }
 
@@ -2820,8 +2963,8 @@ fn task_from_cli(cli: &Cli) -> Task {
         },
         Op::Exituimlk => Task::Exituimlk,
         Op::Exit => Task::Exit,
-        Op::InstallDriver | Op::RestoreDriver => {
-            unreachable!("driver operations are handled before task dispatch")
+        Op::InstallDriver | Op::RestoreDriver | Op::DisableUsbSer | Op::RestoreUsbSer => {
+            unreachable!("driver/service operations are handled before task dispatch")
         }
     }
 }
@@ -2856,7 +2999,21 @@ fn run_driver_op(cli: &Cli) -> i32 {
                 })
             })
         }
-        _ => unreachable!("only driver operations reach this helper"),
+        Op::DisableUsbSer => driver::disable_usbser(None, cli.driver_log_append).map(|()| {
+            json!({
+                "operation": "disable-usbser",
+                "success": true,
+                "start": driver::usbser_start(),
+            })
+        }),
+        Op::RestoreUsbSer => driver::restore_usbser(None, cli.driver_log_append).map(|()| {
+            json!({
+                "operation": "restore-usbser",
+                "success": true,
+                "start": driver::usbser_start(),
+            })
+        }),
+        _ => unreachable!("only driver/service operations reach this helper"),
     };
 
     match outcome {
@@ -2904,7 +3061,10 @@ pub fn cli_main() {
         );
     }
 
-    if matches!(cli.op, Op::InstallDriver | Op::RestoreDriver) {
+    if matches!(
+        cli.op,
+        Op::InstallDriver | Op::RestoreDriver | Op::DisableUsbSer | Op::RestoreUsbSer
+    ) {
         std::process::exit(run_driver_op(&cli));
     }
 
@@ -3003,6 +3163,35 @@ mod tests {
         assert_eq!(
             decode_device_text("@oem61.inf,%devicename%;au T008"),
             "au T008"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_usb_instance_id_works() {
+        assert_eq!(
+            parse_usb_instance_id(r"USB\VID_0FCE&PID_D0FD\07710542464F5353"),
+            Some((0x0FCE, 0xD0FD, Some("07710542464F5353".to_owned())))
+        );
+        assert_eq!(
+            parse_usb_instance_id(r"USB\VID_0FCE&PID_D0FD\7&2D0DA184&0&1"),
+            Some((0x0FCE, 0xD0FD, None))
+        );
+        assert_eq!(
+            parse_usb_instance_id(r"USB\VID_0FCE&PID_D0FD&MI_00\7&2D0DA184&0&1"),
+            None
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "queries the live Windows PnP tree"]
+    fn pnp_usb_devices_live() {
+        let devices = scan_devices(None, None).expect("scan");
+        println!("{devices:#?}");
+        assert!(
+            devices.iter().any(|device| device.bus == 0),
+            "expected at least one PnP-only entry"
         );
     }
 

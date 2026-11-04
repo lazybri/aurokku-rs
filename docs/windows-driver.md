@@ -151,9 +151,11 @@ Windows 10/11 x64 要求驱动包带有效签名(微软 attestation 或自签名
 如果只是想在测试机上阻止 Windows 把 CDC 设备绑定到 `usbser.sys`,可以临时
 把该内核服务的 `Start` 设为 `4`(`SERVICE_DISABLED`):
 
+- GUI:概览页 **WinUSB 驱动** 卡片底部的 **禁用 usbser.sys（测试）** /
+  **恢复 usbser.sys** 按钮(确认后弹一次 UAC);
 - `tools/windows/disable-usbser.reg` — 直接导入的注册表条目;
-- `tools/windows/usbser-service.ps1` — 推荐,带原值备份/恢复、状态查询和
-  `-WhatIf`:
+- `tools/windows/usbser-service.ps1` — 带原值备份/恢复、状态查询和
+  `-WhatIf` 的脚本:
 
   ```powershell
   .\tools\windows\usbser-service.ps1 -Action Status
@@ -218,7 +220,7 @@ Windows 发布包里的 libwdi 是静态库,由仓库 **orphan 分支 `libwdi-st
 
 auRokku 整体以 **GPL-3.0-only** 发布,完整许可证见仓库根目录 `LICENSE`;
 对应源码(Corresponding Source)是名字与发布版本相同的 Git tag,例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.5>。发布包内附
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.6>。发布包内附
 `LICENSE`、`THIRD-PARTY-NOTICES.md`、`LICENSES/LGPL-3.0.txt` 与
 `LICENSES/LGPL-2.1.txt`。
 

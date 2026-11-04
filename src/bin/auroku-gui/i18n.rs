@@ -164,6 +164,31 @@ pub fn t(text: &str) -> &str {
         "上次会话未恢复 {target} 的原始 USB 驱动，可在“WinUSB 驱动”卡片中恢复" => {
             "The previous session did not restore the original USB driver for {target}; you can restore it from the WinUSB driver card."
         }
+        "禁用 usbser.sys 内核服务？" => "Disable the usbser.sys kernel service?",
+        "禁用 usbser.sys" => "Disable usbser.sys",
+        "将把 usbser.sys 的 Start 改为 4（DISABLED），并保存原值以便恢复。这会停用本机所有 CDC 串口设备(COM 口)，只建议在测试机使用；执行后需要重启或重新插拔设备。" => {
+            "This sets the usbser.sys Start value to 4 (DISABLED) and saves the previous value for restoring. Every CDC serial device (COM port) on this machine stops working; use it on test machines only. Reboot or reconnect the device afterwards."
+        }
+        "会无限重启的品牌可先临时禁用 usbser.sys（Start=4）再安装 WinUSB；会停用本机所有 CDC 串口设备，仅建议在测试机使用。" => {
+            "Brands that reboot endlessly can temporarily disable usbser.sys (Start=4) before installing WinUSB. This stops every CDC serial device (COM port); use it on test machines only."
+        }
+        "禁用 usbser.sys（测试）" => "Disable usbser.sys (testing)",
+        "恢复 usbser.sys" => "Restore usbser.sys",
+        "正在禁用 usbser.sys…" => "Disabling usbser.sys…",
+        "正在禁用 usbser.sys（需要管理员确认）…" => {
+            "Disabling usbser.sys (administrator confirmation required)…"
+        }
+        "正在恢复 usbser.sys…" => "Restoring usbser.sys…",
+        "正在恢复 usbser.sys（需要管理员确认）…" => {
+            "Restoring usbser.sys (administrator confirmation required)…"
+        }
+        "已禁用 usbser.sys，请重启或重新插拔设备" => {
+            "usbser.sys disabled; reboot or reconnect the device"
+        }
+        "已恢复 usbser.sys，请重启或重新插拔设备" => {
+            "usbser.sys restored; reboot or reconnect the device"
+        }
+        "usbser.sys 操作失败：{message}" => "usbser.sys operation failed: {message}",
 
         // ------------------------------------------------------------------
         // Overview
@@ -512,6 +537,8 @@ mod tests {
         assert_eq!(t("读取综合状态"), "Read full status");
         assert_eq!(t("WinUSB 驱动"), "WinUSB driver");
         assert_eq!(t("刷新驱动状态"), "Refresh driver status");
+        assert_eq!(t("禁用 usbser.sys（测试）"), "Disable usbser.sys (testing)");
+        assert_eq!(t("恢复 usbser.sys"), "Restore usbser.sys");
         assert_eq!(
             tf("当前 Service：{service}", &[("service", "WINUSB")]),
             "Current service: WINUSB"

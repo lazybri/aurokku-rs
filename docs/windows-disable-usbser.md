@@ -16,7 +16,20 @@
 >   它只是阻止 Windows 自动绑定 usbser，常用于排查/腾出设备后再安装其它驱动。
 > - 不要在正在使用串口设备（调试器、GPS、串口服务器等）的机器上长期禁用。
 
-## 1. PowerShell 脚本（推荐）
+## 1. GUI 按钮（推荐）
+
+Windows 上打开“概览”页的 **WinUSB 驱动** 卡片，底部有：
+
+- **禁用 usbser.sys（测试）** — 确认后弹一次 UAC，把 `usbser` 的 `Start`
+  改为 `4`，并把原值保存到 `%LOCALAPPDATA%\auroku\usbser-state.json`；
+- **恢复 usbser.sys** — 把保存的原值写回（没有保存值时恢复为 Windows 默认
+  的 `3`）。
+
+执行后同样需要重启或重新插拔设备才生效。GUI 现在通过 Windows PnP 树补充
+枚举没有可用驱动的设备，所以禁用 `usbser` 后仍能在设备列表里看到
+VID/PID，并从同一张卡片安装 WinUSB。
+
+## 2. PowerShell 脚本
 
 在**管理员权限**的 PowerShell 中运行：
 
@@ -46,7 +59,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Windows 默认值为 `3`（`DEMAND_START`）。只有在**没有备份**且显式传入
 `-Force` 时才会使用 `-FallbackStart`（默认 3），避免误恢复成错误值。
 
-## 2. 注册表文件（手动导入）
+## 3. 注册表文件（手动导入）
 
 1. 双击 `tools/windows/disable-usbser.reg`，在 UAC 提示中确认；
 2. 或用管理员命令行导入：
@@ -64,7 +77,7 @@ reg add "HKLM\SYSTEM\CurrentControlSet\Services\usbser" /v Start /t REG_DWORD /d
 如果你用脚本禁用，请优先用脚本的 `-Action Restore`，它会恢复**原始值**
 而不是假定默认值。
 
-## 3. 验证
+## 4. 验证
 
 ```bat
 reg query "HKLM\SYSTEM\CurrentControlSet\Services\usbser" /v Start
@@ -74,7 +87,7 @@ sc.exe qc usbser
 禁用后应看到 `Start = 0x4`，`sc qc` 显示 `START_TYPE : 4 DISABLED`；恢复后
 应回到原来的 `3 DEMAND_START`（或备份中的值）。
 
-## 4. 与 auRokku 的 WinUSB 流程配合
+## 5. 与 auRokku 的 WinUSB 流程配合
 
 - 测试某台被 `usbser.sys` 占用的设备时，可以先禁用 usbser、重启/重插，
   让 Windows 不再自动绑定串口驱动，再按 [windows-driver.md](windows-driver.md)
@@ -85,7 +98,7 @@ sc.exe qc usbser
 - GUI 的“WinUSB 驱动”卡可以随时恢复原始驱动；本工具只调整 `usbser` 服务本身，
   与驱动的“退出时自动恢复”是两件事。
 
-## 5. 相关文件
+## 6. 相关文件
 
 - [tools/windows/disable-usbser.reg](../tools/windows/disable-usbser.reg)
 - [tools/windows/usbser-service.ps1](../tools/windows/usbser-service.ps1)
