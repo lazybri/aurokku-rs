@@ -307,10 +307,16 @@ if (-not $SkipGui) {
         }
 
         # Headless testing / CI: ship the offscreen and minimal platform plugins
-        # so `--smoke-test` works without an interactive desktop.
+        # so the --smoke-test flag works without an interactive desktop. Debug
+        # builds load the *d.dll plugin variants (Qt does not mix debug and
+        # release plugins); windeployqt only deploys the qwindows* plugin.
         $platformsDir = Join-Path $guiDir 'platforms'
         New-Item -ItemType Directory -Force -Path $platformsDir | Out-Null
-        foreach ($platformPlugin in @('qoffscreen.dll', 'qminimal.dll')) {
+        $platformPlugins = @('qoffscreen.dll', 'qminimal.dll')
+        if ($debugBuild) {
+            $platformPlugins = @('qoffscreend.dll', 'qminimald.dll')
+        }
+        foreach ($platformPlugin in $platformPlugins) {
             $pluginCandidates = @(
                 (Join-Path $resolvedQt "plugins\platforms\$platformPlugin"),
                 (Join-Path $resolvedQt "share\qt6\plugins\platforms\$platformPlugin")

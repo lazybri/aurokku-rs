@@ -108,8 +108,12 @@ foreach ($name in @('auroku-gui.exe', 'auroku.exe', 'uninstall.exe', 'install-in
 }
 $qtDlls = @(Get-ChildItem -LiteralPath $installDir -Filter 'Qt6*.dll' -File -ErrorAction SilentlyContinue)
 Assert-True ($qtDlls.Count -gt 0) ('installed: Qt 6 runtime DLLs (' + $qtDlls.Count + ')')
-Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'platforms\qwindows.dll')) 'installed: platforms\qwindows.dll'
-Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'platforms\qoffscreen.dll')) 'installed: platforms\qoffscreen.dll'
+$qwindows = (Test-Path -LiteralPath (Join-Path $installDir 'platforms\qwindows.dll')) -or
+            (Test-Path -LiteralPath (Join-Path $installDir 'platforms\qwindowsd.dll'))
+Assert-True $qwindows 'installed: platforms\qwindows(.d).dll'
+$qoffscreen = (Test-Path -LiteralPath (Join-Path $installDir 'platforms\qoffscreen.dll')) -or
+              (Test-Path -LiteralPath (Join-Path $installDir 'platforms\qoffscreend.dll'))
+Assert-True $qoffscreen 'installed: platforms\qoffscreen(.d).dll'
 Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'THIRD-PARTY-NOTICES.txt')) 'installed: THIRD-PARTY-NOTICES.txt'
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $installDir 'auroku_ffi.dll'))) 'no auroku_ffi.dll bridge (Rust backend is static)'
 if ($ExpectMsvcRuntime) {
