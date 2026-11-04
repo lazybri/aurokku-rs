@@ -24,6 +24,7 @@ use crate::worker::{ApiError, Event, Request, Worker};
 /// card also forces a query after those events, so polling can stay slow to
 /// avoid spawning a `reg query` process too often.
 const DRIVER_STATUS_REFRESH: Duration = Duration::from_secs(5);
+const DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 // ==============================================================================
 // Screens
@@ -200,6 +201,10 @@ pub struct AurokuApp {
     // Discovery
     devices: Vec<DeviceSummary>,
     selected_device: Option<usize>,
+    /// Last device (VID/PID/serial) to reselect after a hotplug refresh.
+    desired_target: Option<(u16, u16, Option<String>)>,
+    device_poll_inflight: bool,
+    last_device_poll: Instant,
     permission_pending: bool,
     authorized_device: Option<(u16, u16, u8, u8)>,
     granted_devices: Vec<GrantedDevice>,
@@ -283,6 +288,9 @@ impl AurokuApp {
             type2: false,
             devices: Vec::new(),
             selected_device: None,
+            desired_target: None,
+            device_poll_inflight: false,
+            last_device_poll: Instant::now(),
             permission_pending: false,
             authorized_device: None,
             granted_devices: Vec::new(),
@@ -347,6 +355,36 @@ impl AurokuApp {
                     self.selected_device = None;
                     self.permission_pending = false;
                     self.authorized_device = None;
+
+                    // Re-select the previous device by VID/PID/serial after a
+                    // hotplug, WinUSB install, or automatic refresh.
+                    if let Some(target) = self.desired_target.clone() {
+                        if let Some(index) = self.find_device_index(&target) {
+                            self.apply_device(index, false);
+                        }
+                    }
+                }
+                Event::PolledDevices(devices) => {
+                    self.device_poll_inflight = false;
+                    if !self.selected_device_pnp_only() {
+                        let mut current: Vec<(u16, u16, u8, u8)> = self
+                            .devices
+                            .iter()
+                            .filter(|device| device.bus != 0)
+                            .map(device_key)
+                            .collect();
+                        let mut polled: Vec<(u16, u16, u8, u8)> =
+                            devices.iter().map(device_key).collect();
+                        current.sort_unstable();
+                        polled.sort_unstable();
+                        if current != polled {
+                            self.log(i18n::t("检测到 USB 设备变化，正在刷新设备列表…").to_owned());
+                            self.refresh_device_list();
+                        }
+                    }
+                }
+                Event::PollFailed => {
+                    self.device_poll_inflight = false;
                 }
                 Event::ScanFailed(message) => {
                     self.scanning = false;
@@ -392,6 +430,12 @@ impl AurokuApp {
                             ),
                             Tone::Primary,
                         );
+                        if !self.busy {
+                            if let Some((task, label)) = self.retry_after_driver.take() {
+                                self.notify(i18n::t("WinUSB 驱动已安装，正在重试…"), Tone::Success);
+                                self.start(task, &label);
+                            }
+                        }
                     }
                 }
                 Event::AccessFailed { device, message } => {
@@ -519,18 +563,12 @@ impl AurokuApp {
                                     "已为 {target} 安装 WinUSB 驱动",
                                     &[("target", &target)],
                                 ));
-                                // WinUSB re-enumerates the device: drop the cached
-                                // bus address before retrying by VID/PID.
+                                // WinUSB re-enumerates the device: refresh the
+                                // list and re-select the same VID/PID/serial.
+                                // The pending retry starts from Event::Scanned,
+                                // after the device has been selected again.
                                 self.refresh_device_list();
-                                if let Some((task, label)) = self.retry_after_driver.take() {
-                                    self.notify(
-                                        i18n::t("WinUSB 驱动已安装，正在重试…"),
-                                        Tone::Success,
-                                    );
-                                    self.start(task, &label);
-                                } else {
-                                    self.notify(i18n::t("WinUSB 驱动已安装"), Tone::Success);
-                                }
+                                self.notify(i18n::t("WinUSB 驱动已安装"), Tone::Success);
                             } else {
                                 if self.driver_pending_restore == Some((vid, pid)) {
                                     self.driver_pending_restore = None;
@@ -622,6 +660,7 @@ impl AurokuApp {
         let Some(device) = self.devices.get(index).cloned() else {
             return;
         };
+        self.desired_target = Some((device.vid, device.pid, device.serial.clone()));
         let key = device_key(&device);
         if self.selected_device_key() == Some(key) && self.authorized_device == Some(key) {
             return;
@@ -780,8 +819,60 @@ impl AurokuApp {
     fn refresh_device_list(&mut self) {
         self.driver_status_cache = None;
         self.driver_status_query = None;
+        if self.desired_target.is_none() {
+            if let Some(device) = self
+                .selected_device
+                .and_then(|index| self.devices.get(index))
+            {
+                self.desired_target = Some((device.vid, device.pid, device.serial.clone()));
+            }
+        }
         self.scan(false);
         self.log(i18n::t("设备已重新枚举，正在刷新设备列表…").to_owned());
+    }
+
+    fn find_device_index(&self, target: &(u16, u16, Option<String>)) -> Option<usize> {
+        let (vid, pid, serial) = target;
+        self.devices
+            .iter()
+            .position(|device| {
+                device.vid == *vid
+                    && device.pid == *pid
+                    && match serial {
+                        Some(expected) => device.serial.as_deref() == Some(expected.as_str()),
+                        None => true,
+                    }
+            })
+            .or_else(|| {
+                self.devices
+                    .iter()
+                    .position(|device| device.vid == *vid && device.pid == *pid)
+            })
+    }
+
+    fn selected_device_pnp_only(&self) -> bool {
+        self.selected_device
+            .and_then(|index| self.devices.get(index))
+            .is_some_and(|device| device.bus == 0)
+    }
+
+    /// Poll the USB bus cheaply so unplug/replug or a WinUSB switch refreshes
+    /// both the picker and the selected VID/PID target.
+    fn pump_device_poll(&mut self) {
+        if self.busy
+            || self.scanning
+            || self.permission_pending
+            || self.device_poll_inflight
+            || self.selected_device_pnp_only()
+        {
+            return;
+        }
+        if self.last_device_poll.elapsed() < DEVICE_POLL_INTERVAL {
+            return;
+        }
+        self.last_device_poll = Instant::now();
+        self.device_poll_inflight = true;
+        self.worker.send(Request::PollDevices);
     }
 
     fn confirm_write(&mut self) {
@@ -1247,6 +1338,12 @@ impl AurokuApp {
                         .color(s.on_surface),
                 );
             });
+            ui.add_space(4.0);
+            subtle_label(
+                ui,
+                &s,
+                "默认先跳过 base 认证；认证失败会自动回退 Type2Auth 并重试。",
+            );
 
             ui.add_space(6.0);
             banner(
@@ -3103,9 +3200,11 @@ impl eframe::App for AurokuApp {
         self.poll_events();
         if self.screen == Screen::Overview {
             self.pump_driver_status();
+            self.pump_device_poll();
             if cfg!(windows) && self.driver_target().is_some() {
                 ctx.request_repaint_after(DRIVER_STATUS_REFRESH);
             }
+            ctx.request_repaint_after(DEVICE_POLL_INTERVAL);
         }
         if self.busy || self.scanning {
             self.worker.keep_alive();

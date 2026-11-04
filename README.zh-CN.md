@@ -13,7 +13,8 @@
 - ICCID 记录读取（0x59）
 - 单会话综合状态 / 批量查询
 - USB 布局枚举、SERI 回声与 SCDP 主动探测（`--op probe`）
-- Type2Auth 52/53 认证（`--type2`）
+- Type2Auth 52/53 认证（默认先不做 base 认证，认证失败自动回退到 base 52/53；`--type2` 强制启用 base 认证）
+- GUI 热插拔刷新：设备断开/重插或 WinUSB 安装/恢复后，自动重新扫描设备选择表，并按 VID/PID/序列号重新选中目标设备
 - 兼容多品牌 SN 解析：11 位序列号、16 位十六进制 NV10077，以及 USB 描述符在 11 位印刷序列号后多带 1 位数字的 12 位 SN（自动去掉末尾附加位）
 - 可选 JSON 输出、详细 USB 帧日志
 - egui + eframe 跨平台 GUI 前端（Material 3 风格，中英文界面，Wayland / Windows / macOS）

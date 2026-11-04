@@ -214,6 +214,9 @@ pub fn t(text: &str) -> &str {
         "接口号（可选）" => "Interface (optional)",
         "自动" => "Auto",
         "Type2Auth 52/53 认证" => "Type2Auth 52/53 authentication",
+        "默认先跳过 base 认证；认证失败会自动回退 Type2Auth 并重试。" => {
+            "By default base authentication is skipped; on authentication failure it automatically retries with Type2Auth."
+        }
         "详细 USB 日志" => "Verbose USB log",
         "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动去掉末尾附加数字后解析。" => {
             "When SN is empty the device iSerialNumber is used. If the device has no serial, enter an 11-character SN or 16 hex digits manually; a 12-character SN automatically drops the extra trailing digit before parsing."
@@ -494,6 +497,9 @@ pub fn t(text: &str) -> &str {
         "界面已启动，正在扫描 USB 总线" => "UI started; scanning the USB bus",
         "开始扫描 USB 设备" => "Scanning USB devices",
         "扫描完成，发现 {n} 个 USB 设备" => "Scan complete: {n} USB device(s) found",
+        "检测到 USB 设备变化，正在刷新设备列表…" => {
+            "USB device change detected; refreshing the device list…"
+        }
         "扫描失败：{message}" => "Scan failed: {message}",
         "{label} 完成：{status}" => "{label} finished: {status}",
         "结果为失败" => "Failed",

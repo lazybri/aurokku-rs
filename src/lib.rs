@@ -2297,6 +2297,24 @@ pub fn scan_devices(
     filter_vid: Option<u16>,
     filter_pid: Option<u16>,
 ) -> AuRokkuResult<Vec<DeviceSummary>> {
+    scan_devices_impl(filter_vid, filter_pid, true)
+}
+
+/// Fast enumeration without the Windows PnP fallback, used for hotplug polling.
+pub fn scan_devices_quick(
+    filter_vid: Option<u16>,
+    filter_pid: Option<u16>,
+) -> AuRokkuResult<Vec<DeviceSummary>> {
+    scan_devices_impl(filter_vid, filter_pid, false)
+}
+
+fn scan_devices_impl(
+    filter_vid: Option<u16>,
+    filter_pid: Option<u16>,
+    include_pnp: bool,
+) -> AuRokkuResult<Vec<DeviceSummary>> {
+    #[cfg(not(windows))]
+    let _ = include_pnp;
     let context = Context::new()
         .map_err(|e| AuRokkuError::Runtime(format!("Unable to initialize libusb: {e}")))?;
     let devices = context
@@ -2371,7 +2389,7 @@ pub fn scan_devices(
     // PnP-only fallback entries (bus/address 0) come after devices with a real
     // libusb bus location.
     #[cfg(windows)]
-    {
+    if include_pnp {
         let pnp = pnp_usb_devices(filter_vid, filter_pid, &out);
         out.extend(pnp);
     }
@@ -2385,6 +2403,30 @@ pub fn scan_devices(
 /// This mirrors `run_session` from the original CLI: probe tasks may run
 /// without an SN, every other task requires Type2Auth material.
 pub fn run_task(config: &DeviceConfig, task: &Task) -> AuRokkuResult<Value> {
+    let outcome = run_task_once(config, task, config.type2);
+    if config.type2 {
+        return outcome;
+    }
+    let Err(error) = &outcome else {
+        return outcome;
+    };
+    if !should_retry_with_type2(error) {
+        return outcome;
+    }
+
+    // Most devices work without base 52/53 authentication. If the default
+    // (type1-style) attempt fails during authentication, retry once with base
+    // Type2Auth enabled. This only happens for auth-phase errors, so a write
+    // command is never replayed after it may have been accepted.
+    if let Some(sink) = &config.log_sink {
+        sink("默认认证失败，自动回退到 Type2Auth（base 52/53）重试…");
+    }
+    let mut result = run_task_once(config, task, true)?;
+    result["type2_fallback"] = json!(true);
+    Ok(result)
+}
+
+fn run_task_once(config: &DeviceConfig, task: &Task, type2: bool) -> AuRokkuResult<Value> {
     let mut device = AuRokkuDevice::new(
         config.vid,
         config.pid,
@@ -2393,7 +2435,7 @@ pub fn run_task(config: &DeviceConfig, task: &Task) -> AuRokkuResult<Value> {
         config.ep_out,
         config.ep_in,
         config.verbose,
-        config.type2,
+        type2,
     );
     device.set_usb_location(config.usb_location);
     if let Some(sink) = &config.log_sink {
@@ -2403,6 +2445,21 @@ pub fn run_task(config: &DeviceConfig, task: &Task) -> AuRokkuResult<Value> {
     let outcome = run_task_with(&mut device, task);
     device.close();
     outcome
+}
+
+/// Whether a failed default-mode attempt is worth retrying with base Type2Auth.
+///
+/// Only authentication-phase failures qualify: replaying a task after a write
+/// command may have been accepted would be unsafe.
+fn should_retry_with_type2(error: &AuRokkuError) -> bool {
+    match error {
+        AuRokkuError::Runtime(message) => {
+            message.contains("Authentication failed for")
+                || message.contains("Invalid challenge frame for")
+        }
+        AuRokkuError::Timeout(message) => message.starts_with("Timeout waiting for 17 bytes"),
+        AuRokkuError::Value(_) | AuRokkuError::Driver(_) => false,
+    }
 }
 
 fn run_task_with(device: &mut AuRokkuDevice, task: &Task) -> AuRokkuResult<Value> {
@@ -2576,7 +2633,7 @@ struct Cli {
     #[arg(long)]
     verbose: bool,
 
-    /// Enable 52/53 authentication
+    /// Force base 52/53 Type2Auth (default: try without base auth, then fall back automatically)
     #[arg(long)]
     type2: bool,
 
@@ -3194,6 +3251,22 @@ pub fn cli_main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type2_fallback_only_for_auth_phase_errors() {
+        assert!(should_retry_with_type2(&AuRokkuError::Runtime(
+            "Authentication failed for uimlk: 53 00".to_string()
+        )));
+        assert!(should_retry_with_type2(&AuRokkuError::Timeout(
+            "Timeout waiting for 17 bytes; buffered".to_string()
+        )));
+        assert!(!should_retry_with_type2(&AuRokkuError::Runtime(
+            "Device 0fce:d0fd not found".to_string()
+        )));
+        assert!(!should_retry_with_type2(&AuRokkuError::Timeout(
+            "Timeout waiting for 10 bytes; buffered".to_string()
+        )));
+    }
 
     #[test]
     fn decode_device_text_strips_indirect_strings() {

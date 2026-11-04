@@ -716,6 +716,83 @@ fn reg_query_string(key: &str, value_name: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
+fn reg_query_dword(key: &str, value_name: &str) -> Option<u32> {
+    let output = run_reg(&["query", key, "/v", value_name]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        if parts.next() != Some(value_name) || parts.next() != Some("REG_DWORD") {
+            continue;
+        }
+        let value = parts.next()?.trim_start_matches("0x");
+        return u32::from_str_radix(value, 16).ok();
+    }
+    None
+}
+
+/// Decode a Windows registry export (.reg) as produced by reg.exe.
+#[cfg(windows)]
+fn decode_reg_export(bytes: &[u8]) -> Option<String> {
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        return String::from_utf16(&units).ok();
+    }
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        return String::from_utf16(&units).ok();
+    }
+    Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Verify that a reg.exe export only touches the device-install Restrictions key.
+/// The backup file lives in a user-writable directory, so an elevated restore
+/// must not import unrelated HKLM keys from a tampered file.
+#[cfg(windows)]
+fn validate_policy_backup(path: &std::path::Path) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|error| format!("cannot read policy backup: {error}"))?;
+    let text = decode_reg_export(&bytes)
+        .ok_or_else(|| "policy backup is not valid UTF-16/UTF-8 registry text".to_owned())?;
+    let expected =
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeviceInstall\\Restrictions";
+    let expected_upper = expected.to_ascii_uppercase();
+    let subkey_prefix = format!("{expected_upper}\\");
+    let mut seen_key = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix('[') else {
+            continue;
+        };
+        let Some(key) = rest.strip_suffix(']') else {
+            continue;
+        };
+        let key_upper = key.to_ascii_uppercase();
+        if key_upper != expected_upper && !key_upper.starts_with(&subkey_prefix) {
+            return Err(format!(
+                "policy backup contains an unexpected registry key: {key}"
+            ));
+        }
+        seen_key = true;
+    }
+    if !seen_key {
+        return Err("policy backup does not contain the Restrictions key".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 fn export_policy_backup(path: &std::path::Path) -> Result<bool, String> {
     if !reg_key_exists(DEVICE_INSTALL_POLICY_KEY) {
         return Ok(false);
@@ -772,14 +849,51 @@ pub fn block_usbser_install(log: Option<DriverLog>, append_log: bool) -> Result<
         return elevate_self(&driver_args("block-usbser-install", 0, 0));
     }
 
-    if reg_query_string(DENY_DEVICE_CLASSES_ENTRY_KEY, "DeviceClass")
+    let entry_value = reg_query_string(DENY_DEVICE_CLASSES_ENTRY_KEY, "DeviceClass");
+    if entry_value
+        .as_deref()
         .is_some_and(|value| value.eq_ignore_ascii_case(PORTS_CLASS_GUID))
     {
-        emit(&log, "Ports 类安装限制已处于启用状态");
+        // The entry may be a leftover with the parent DWORD missing or 0. In
+        // that case the restriction is NOT active; write the DWORD instead of
+        // reporting a false success.
+        if reg_query_dword(DEVICE_INSTALL_POLICY_KEY, "DenyDeviceClasses") == Some(1) {
+            emit(&log, "Ports 类安装限制已处于启用状态");
+            return Ok(());
+        }
+        if !policy_state_path().exists() {
+            save_policy_record(&PolicyRecord {
+                key_existed: false,
+                backup_file: false,
+                applied_at: now_unix(),
+            })?;
+        }
+        let output = run_reg(&[
+            "add",
+            DEVICE_INSTALL_POLICY_KEY,
+            "/v",
+            "DenyDeviceClasses",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
+            "/f",
+        ])?;
+        if !output.status.success() {
+            return Err(format!(
+                "无法启用 DenyDeviceClasses：{}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        refresh_device_install_policy();
+        emit(
+            &log,
+            "已补写 DenyDeviceClasses 策略值（Ports 类安装限制现在生效）",
+        );
         return Ok(());
     }
 
-    if let Some(existing) = reg_query_string(DENY_DEVICE_CLASSES_ENTRY_KEY, "DeviceClass") {
+    if let Some(existing) = entry_value {
         return Err(format!(
             "设备安装限制的 DenyDeviceClasses\\1 已被其它类占用（{existing}）；请先清理后再试"
         ));
@@ -859,6 +973,17 @@ pub fn restore_usbser_policy(log: Option<DriverLog>, append_log: bool) -> Result
         return Err("没有找到由 auRokku 保存的设备安装策略状态，未做修改".to_owned());
     };
 
+    if record.backup_file {
+        let backup = policy_backup_path();
+        if !backup.is_file() {
+            return Err(format!(
+                "策略备份文件不存在（{}）；未做修改，以免丢失原有策略",
+                backup.display()
+            ));
+        }
+        validate_policy_backup(&backup)?;
+    }
+
     // Always remove our explicit entry first. reg import() restores values but
     // does not delete entries that were not in the backup, so a stale backup
     // must not be the only cleanup step.
@@ -871,7 +996,7 @@ pub fn restore_usbser_policy(log: Option<DriverLog>, append_log: bool) -> Result
         "/f",
     ]);
 
-    if record.backup_file && policy_backup_path().is_file() {
+    if record.backup_file {
         import_policy_backup(&policy_backup_path())?;
     } else if !record.key_existed {
         let _ = run_reg(&["delete", DENY_DEVICE_CLASSES_KEY, "/f"]);

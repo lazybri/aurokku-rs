@@ -31,6 +31,11 @@ on:
         required: false
         type: boolean
         default: false
+      windows_only:
+        description: "仅构建 Windows 测试构件（不发布 release）"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -82,32 +87,35 @@ jobs:
       libwdi-sha: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
       libwdi-ref: libwdi-1.5.1-x64-r1
 
+  prepare:
+    name: Prepare build matrix
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Select platforms
+        id: set
+        run: |
+          if [ "${{ inputs.windows_only }}" = "true" ]; then
+            matrix='{"include":[{"name":"windows-x86_64","os":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","glob":"dist/*.zip"}]}'
+          else
+            matrix='{"include":[{"name":"windows-x86_64","os":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","glob":"dist/*.zip"},{"name":"linux-x86_64","os":"ubuntu-22.04","rust_targets":"x86_64-unknown-linux-musl","glob":"dist/*.tar.gz"},{"name":"macos-universal","os":"macos-14","rust_targets":"aarch64-apple-darwin,x86_64-apple-darwin","glob":"dist/*.zip"}]}'
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   # 一次运行内并行构建所有平台；发布 job 汇总产物后直接创建 Release。
   build:
     name: Build ${{ matrix.name }}
     if: github.event_name != 'pull_request'
-    needs: [test, libwdi]
+    needs: [test, libwdi, prepare]
     runs-on: ${{ matrix.os }}
     env:
       # Commit pushes (and manual dispatch with mode=debug) build the dev profile.
       AUROKU_BUILD_DEBUG: ${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '1' || '' }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: windows-x86_64
-            os: windows-latest
-            rust_targets: x86_64-pc-windows-msvc
-            glob: dist/*.zip
-          - name: linux-x86_64
-            # 22.04 keeps the dynamically linked GUI compatible with glibc 2.35+.
-            os: ubuntu-22.04
-            rust_targets: x86_64-unknown-linux-musl
-            glob: dist/*.tar.gz
-          - name: macos-universal
-            os: macos-14
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            glob: dist/*.zip
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -221,7 +229,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release' && github.event.inputs.windows_only != 'true'
     needs: build
     runs-on: ubuntu-latest
     permissions:

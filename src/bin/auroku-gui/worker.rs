@@ -10,7 +10,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use auroku::{
-    driver, run_task, scan_devices, AuRokkuError, DeviceConfig, DeviceSummary, LogSink, Task,
+    driver, run_task, scan_devices, scan_devices_quick, AuRokkuError, DeviceConfig, DeviceSummary,
+    LogSink, Task,
 };
 use eframe::egui;
 
@@ -59,6 +60,8 @@ pub enum Request {
         vid: u16,
         pid: u16,
     },
+    /// Lightweight USB presence poll (no PnP fallback).
+    PollDevices,
     /// Block new Ports-class driver installs so usbser cannot take over.
     BlockUsbSerInstall,
     /// Restore the device installation policy saved by the block action.
@@ -69,6 +72,8 @@ pub enum Request {
 pub enum Event {
     ScanStarted,
     Scanned(Vec<DeviceSummary>),
+    PolledDevices(Vec<DeviceSummary>),
+    PollFailed,
     ScanFailed(String),
     AccessStarted(DeviceSummary),
     AccessGranted {
@@ -204,6 +209,14 @@ impl Worker {
                             let service = driver::driver_service(vid, pid);
                             let _ = thread_events.send(Event::DriverStatus { vid, pid, service });
                         }
+                        Request::PollDevices => match scan_devices_quick(None, None) {
+                            Ok(devices) => {
+                                let _ = thread_events.send(Event::PolledDevices(devices));
+                            }
+                            Err(_) => {
+                                let _ = thread_events.send(Event::PollFailed);
+                            }
+                        },
                         Request::BlockUsbSerInstall => {
                             let result = driver::block_usbser_install(None, false);
                             let _ = thread_events.send(Event::UsbSerService {

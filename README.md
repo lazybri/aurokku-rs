@@ -14,7 +14,8 @@ the original Python source.
 - ICCID record read (0x59)
 - Single-session status / batch queries
 - USB layout enumeration, SERI echo and SCDP active probe (`--op probe`)
-- Type2Auth 52/53 authentication (`--type2`)
+- Type2Auth 52/53 authentication with automatic fallback: start without base authentication and retry with base 52/53 if authentication fails (`--type2` forces base auth)
+- GUI hotplug refresh: after unplug/replug or WinUSB install/restore, the device picker and the selected VID/PID/serial target are re-scanned and re-selected automatically
 - Brand-tolerant SN parsing: 11-character serials, 16 hex NV10077 bytes, and 12-character USB serials that append one extra digit to the printed serial (the trailing digit is trimmed)
 - Optional JSON output and verbose USB frame logs
 - egui + eframe cross-platform GUI (Material 3, Chinese/English UI, Wayland / Windows / macOS)
