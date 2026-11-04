@@ -4,7 +4,7 @@ version = "0.3.2"
 edition = "2021"
 rust-version = "1.88"
 description = "SERI / Type2Auth USB device service tool (Rust port of auRokku.py)"
-license = "MIT"
+license = "GPL-3.0-only"
 
 [features]
 default = []

@@ -191,9 +191,50 @@ if ($license) {
     Write-Host '==> libwdi is not linked; no LGPL license file to bundle'
 }
 
+# GPLv3 / third-party compliance files. Every archive must carry the project
+# licence, the complete third-party notices and the LGPL texts for the static
+# links (see THIRD-PARTY-NOTICES.md). Missing files are hard errors so a
+# release can never be packaged without them.
+$complianceRoot = Get-Location
+$complianceFiles = @('LICENSE', 'THIRD-PARTY-NOTICES.md')
+foreach ($name in $complianceFiles) {
+    $source = Join-Path $complianceRoot $name
+    if (-not (Test-Path $source)) { throw "required compliance file not found: $source" }
+    $dest = Join-Path $distDir $name
+    Copy-Item $source $dest -Force
+    $archiveItems += $dest
+    Write-Host "Compliance: $dest"
+}
+
+$licenseSourceDir = Join-Path $complianceRoot 'LICENSES'
+foreach ($name in @('LGPL-3.0.txt', 'LGPL-2.1.txt')) {
+    $source = Join-Path $licenseSourceDir $name
+    if (-not (Test-Path $source)) { throw "required third-party license text not found: $source" }
+}
+$distLicenses = Join-Path $distDir 'LICENSES'
+New-Item -ItemType Directory -Force -Path $distLicenses | Out-Null
+Copy-Item (Join-Path $licenseSourceDir '*') $distLicenses -Recurse -Force
+$archiveItems += $distLicenses
+Write-Host "Compliance: $distLicenses"
+
 $version = (Select-String -Path (Join-Path (Get-Location) 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 $zip = Join-Path $distDir "auroku-windows-$arch-v$version$zipSuffix.zip"
 Compress-Archive -Path $archiveItems -DestinationPath $zip -Force
+
+# Assert the archive really contains the compliance files (Compress-Archive
+# preserves the LICENSES directory and its entries use forward slashes).
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+try {
+    $entryNames = @($zipArchive.Entries | ForEach-Object { $_.FullName })
+} finally {
+    $zipArchive.Dispose()
+}
+foreach ($requiredEntry in @('LICENSE', 'THIRD-PARTY-NOTICES.md', 'LICENSES/LGPL-3.0.txt', 'LICENSES/LGPL-2.1.txt')) {
+    if ($entryNames -notcontains $requiredEntry) {
+        throw "archive $zip is missing the required compliance entry: $requiredEntry"
+    }
+}
 
 Write-Host ""
 Write-Host "Output:  $distExe"

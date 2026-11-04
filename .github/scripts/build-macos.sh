@@ -141,6 +141,12 @@ if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$GUI_OUT"
 fi
 
+# GPLv3 / third-party compliance files. The workflow copies them into the
+# dist/macos-universal directory that is zipped (see THIRD-PARTY-NOTICES.md).
+cp LICENSE THIRD-PARTY-NOTICES.md "$OUT_DIR"/
+rm -rf "$OUT_DIR/LICENSES"
+cp -R LICENSES "$OUT_DIR/LICENSES"
+
 echo
 if [[ "$MODE" == "universal" ]]; then
     lipo -info "$OUT"

@@ -307,3 +307,28 @@ auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
   反推 11 位序列号。
 - 错误类型名（`ValueError` / `RuntimeError` / `TimeoutError`）与退出码
   （失败为 1）均与 Python 版保持一致。
+
+## 许可证
+
+本项目是自由软件，整体以 **GNU 通用公共许可证第 3 版（仅此版本，
+`GPL-3.0-only`）** 发布，完整许可证见 [`LICENSE`](LICENSE)。在适用法律允许的
+范围内，本软件**不提供任何担保**。
+
+每个发布版本对应的完整**对应源码（Corresponding Source）**就是与版本同名的
+Git tag 下的源码树，例如
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.2>（全部 tag 见
+<https://github.com/lazybri/aurokku-rs/tags>）。该 tag 包含生成发布产物所用的
+构建脚本与 GitHub Actions 工作流。
+
+发布包同时包含 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 以及第三方许可证
+文本：
+
+- [LICENSES/LGPL-3.0.txt](LICENSES/LGPL-3.0.txt) —— libwdi（LGPL-3.0，
+  Windows 发布版静态链接）
+- [LICENSES/LGPL-2.1.txt](LICENSES/LGPL-2.1.txt) —— libusb（LGPL-2.1，
+  各平台均静态链接）
+- [`LICENSES/`](LICENSES/) 下的字体许可证文本（egui 回退字体）
+
+libusb 与 libwdi 是以静态链接方式使用的 LGPL 库。要重新链接，可替换相应的库，
+再用公开源码 tag 重新构建本程序；具体步骤见
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 第 4 节。

@@ -177,6 +177,12 @@ cp "$OUT" "$DIST"
 cp "$GUI_OUT" "$GUI_DIST"
 chmod +x "$DIST" "$GUI_DIST"
 
+# GPLv3 / third-party compliance files: the CI tar step packages these next to
+# the binaries (see THIRD-PARTY-NOTICES.md).
+cp LICENSE THIRD-PARTY-NOTICES.md dist/
+rm -rf dist/LICENSES
+cp -R LICENSES dist/LICENSES
+
 echo
 file "$OUT"
 file "$GUI_OUT"

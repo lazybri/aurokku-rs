@@ -336,3 +336,28 @@ Implementation details:
   (Python semantics) rather than being mapped back to an 11-character serial.
 - Error type names (`ValueError` / `RuntimeError` / `TimeoutError`) and exit
   codes (1 on failure) match the Python version.
+
+## License
+
+auRokku is free software licensed under the **GNU General Public License,
+version 3 only (`GPL-3.0-only`)**. The complete licence text is
+[`LICENSE`](LICENSE). There is **no warranty**, to the extent permitted by law.
+
+The complete **Corresponding Source** of a release is the source tree at the
+matching Git tag, for example
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.2> (all tags:
+<https://github.com/lazybri/aurokku-rs/tags>). The tag contains the build
+scripts and GitHub Actions workflow that produce the released binaries.
+
+Release packages also contain [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+and the third-party licence texts:
+
+- [LICENSES/LGPL-3.0.txt](LICENSES/LGPL-3.0.txt) — libwdi (LGPL-3.0, static
+  link in the Windows release)
+- [LICENSES/LGPL-2.1.txt](LICENSES/LGPL-2.1.txt) — libusb (LGPL-2.1, static
+  link on all platforms)
+- font licence texts in [`LICENSES/`](LICENSES/) for the egui fallback fonts
+
+libusb and libwdi are statically linked LGPL libraries. Both can be relinked by
+rebuilding the program from the public source tag with a modified library; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) §4 for the procedure.
