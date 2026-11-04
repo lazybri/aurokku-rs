@@ -1,7 +1,9 @@
 #include "ui/pages/OverviewPage.h"
 
+#include <QClipboard>
 #include <QComboBox>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -57,6 +59,7 @@ OverviewPage::OverviewPage(PageHost *host, QWidget *parent)
 
     buildConnectionCard();
     buildQuickActionsCard();
+    buildDriverCard();
     addLastResultCard();
 }
 
@@ -200,6 +203,82 @@ void OverviewPage::buildQuickActionsCard()
     m_content->addWidget(frame);
 }
 
+void OverviewPage::buildDriverCard()
+{
+    auto *frame = Ui::card(this);
+    QVBoxLayout *body = Ui::cardBody(frame);
+    body->addWidget(Ui::cardHeader(
+        Icon::Usb, QStringLiteral("WinUSB 驱动"),
+        QStringLiteral("Windows 上设备默认由 usbser.sys 占用，需要安装 WinUSB 驱动才能访问"),
+        frame));
+    body->addWidget(Ui::banner(
+        Icon::Info,
+        QStringLiteral("该设备当前由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。"),
+        Tone::Neutral, frame));
+
+    auto *row = new QHBoxLayout;
+    row->setSpacing(8);
+    m_installDriver = track(Ui::button(QStringLiteral("安装 WinUSB 驱动"),
+                                       Ui::ButtonVariant::Filled, Icon::Usb, frame));
+    m_restoreDriver = track(Ui::button(QStringLiteral("恢复原驱动"),
+                                       Ui::ButtonVariant::Outlined, Icon::Refresh, frame));
+    m_copyLog = Ui::button(QStringLiteral("复制路径"), Ui::ButtonVariant::Text, Icon::Copy, frame);
+    row->addWidget(m_installDriver);
+    row->addWidget(m_restoreDriver);
+    row->addWidget(m_copyLog);
+    row->addStretch(1);
+    body->addLayout(row);
+
+    auto *toggleRow = new QHBoxLayout;
+    toggleRow->setSpacing(10);
+    m_restoreOnExit = new ToggleSwitch(state().restoreDriverOnExit, frame);
+    toggleRow->addWidget(m_restoreOnExit);
+    toggleRow->addWidget(Ui::label(QStringLiteral("退出时自动恢复原驱动"), {}, frame));
+    toggleRow->addStretch(1);
+    body->addLayout(toggleRow);
+
+    m_driverState = Ui::valueLabel(QString(), false, frame);
+    m_driverState->setWordWrap(true);
+    body->addWidget(m_driverState);
+    m_driverService = Ui::valueLabel(QString(), true, frame);
+    body->addWidget(m_driverService);
+    m_driverLog = Ui::valueLabel(QString(), true, frame);
+    m_driverLog->setWordWrap(true);
+    body->addWidget(m_driverLog);
+
+    connect(m_installDriver, &QPushButton::clicked, this, [this] {
+        quint16 vid = 0;
+        quint16 pid = 0;
+        if (!driverTarget(&vid, &pid)) {
+            host()->showToast(I18n::t(QStringLiteral("请先扫描并选择 USB 设备")), Tone::Warning);
+            return;
+        }
+        host()->installDriver(vid, pid, m_restoreOnExit->isChecked());
+    });
+    connect(m_restoreDriver, &QPushButton::clicked, this, [this] {
+        quint16 vid = 0;
+        quint16 pid = 0;
+        if (!driverTarget(&vid, &pid)) {
+            host()->showToast(I18n::t(QStringLiteral("请先扫描并选择 USB 设备")), Tone::Warning);
+            return;
+        }
+        host()->restoreDriver(vid, pid);
+    });
+    connect(m_copyLog, &QPushButton::clicked, this, [this] {
+        if (state().driver.logPath.isEmpty())
+            return;
+        QGuiApplication::clipboard()->setText(state().driver.logPath);
+        host()->showToast(I18n::t(QStringLiteral("已复制驱动日志路径")), Tone::Primary);
+    });
+    connect(m_restoreOnExit, &ToggleSwitch::toggled, this, [this](bool checked) {
+        state().restoreDriverOnExit = checked;
+    });
+
+    m_driverCard = frame;
+    frame->hide();
+    m_content->addWidget(frame);
+}
+
 void OverviewPage::persistForm()
 {
     state().vidText = m_vid->text();
@@ -272,6 +351,98 @@ void OverviewPage::updateScanError()
     m_scanErrorHost->show();
 }
 
+bool OverviewPage::driverTarget(quint16 *vid, quint16 *pid) const
+{
+    if (state().driver.pending) {
+        if (vid != nullptr)
+            *vid = state().driver.pendingVid;
+        if (pid != nullptr)
+            *pid = state().driver.pendingPid;
+        return true;
+    }
+    if (state().hasDriverTarget) {
+        if (vid != nullptr)
+            *vid = state().driverTargetVid;
+        if (pid != nullptr)
+            *pid = state().driverTargetPid;
+        return true;
+    }
+    const int index = state().selectedDevice;
+    if (index >= 0 && index < state().devices.size()) {
+        if (vid != nullptr)
+            *vid = state().devices.at(index).vid;
+        if (pid != nullptr)
+            *pid = state().devices.at(index).pid;
+        return true;
+    }
+    return false;
+}
+
+void OverviewPage::refreshDriverCard()
+{
+    if (m_driverCard == nullptr)
+        return;
+
+    const bool visible = state().driver.supported;
+    m_driverCard->setVisible(visible);
+    if (!visible)
+        return;
+
+    quint16 vid = 0;
+    quint16 pid = 0;
+    const bool hasTarget = driverTarget(&vid, &pid);
+
+    {
+        const QSignalBlocker blocker(m_restoreOnExit);
+        m_restoreOnExit->setChecked(state().restoreDriverOnExit, false);
+    }
+
+    QString stateText;
+    if (state().driver.pending) {
+        stateText = I18n::tf(
+            QStringLiteral("上次会话未恢复 {target} 的原始 USB 驱动，可在概览页的 WinUSB 驱动卡片中恢复"),
+            {{QStringLiteral("target"), state().driver.pendingTarget()}});
+    } else if (state().driver.busy) {
+        stateText = I18n::t(QStringLiteral("正在处理 WinUSB 驱动操作…"));
+    } else if (!state().driver.known) {
+        stateText = I18n::t(QStringLiteral("正在读取驱动状态…"));
+    } else if (!hasTarget) {
+        stateText = I18n::t(QStringLiteral("选择设备后可安装或恢复 WinUSB 驱动"));
+    } else {
+        const QString target = QStringLiteral("%1:%2")
+                                   .arg(vid, 4, 16, QLatin1Char('0'))
+                                   .arg(pid, 4, 16, QLatin1Char('0'));
+        stateText = I18n::tf(QStringLiteral("目标设备：{target}"),
+                             {{QStringLiteral("target"), target}});
+    }
+    m_driverState->setText(stateText);
+
+    if (!state().driver.service.isEmpty()) {
+        m_driverService->setText(I18n::tf(QStringLiteral("当前 Service：{service}"),
+                                          {{QStringLiteral("service"), state().driver.service}}));
+        m_driverService->show();
+    } else if (state().hasDriverTarget) {
+        m_driverService->setText(
+            I18n::t(QStringLiteral("当前 Service：usbser.sys（需要替换）")));
+        m_driverService->show();
+    } else {
+        m_driverService->hide();
+    }
+
+    if (state().driver.logPath.isEmpty()) {
+        m_driverLog->hide();
+        m_copyLog->setEnabled(false);
+    } else {
+        m_driverLog->setText(I18n::tf(QStringLiteral("驱动日志：{path}"),
+                                      {{QStringLiteral("path"), state().driver.logPath}}));
+        m_driverLog->show();
+        m_copyLog->setEnabled(true);
+    }
+
+    m_installDriver->setEnabled(hasTarget && !state().driver.busy);
+    m_restoreDriver->setEnabled(hasTarget && !state().driver.busy);
+}
+
 void OverviewPage::refresh()
 {
     rebuildDeviceCombo();
@@ -300,5 +471,6 @@ void OverviewPage::refresh()
     }
 
     updateScanError();
+    refreshDriverCard();
     updateLastResult();
 }

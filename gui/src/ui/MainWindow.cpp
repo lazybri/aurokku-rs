@@ -97,6 +97,9 @@ MainWindow::MainWindow(QWidget *parent)
     updateChrome();
 
     QTimer::singleShot(160, this, [this] { scanDevices(false); });
+    // Explicit driver probe: surfaces a pending_restore left by a crashed run
+    // and feeds the WinUSB driver card on the Overview page.
+    QTimer::singleShot(900, this, [this] { refreshDriverStatus(); });
 }
 
 MainWindow::~MainWindow()
@@ -108,16 +111,50 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    QString error;
-    if (m_usbAccess.revoke(&error)) {
-        event->accept();
+    qInfo().noquote() << "closeEvent: driver busy =" << m_state.driver.busy
+                      << "restore-on-exit =" << m_state.restoreDriverOnExit;
+    if (m_state.driver.busy) {
+        QMessageBox::warning(
+            this, I18n::t(QStringLiteral("驱动操作进行中")),
+            I18n::t(QStringLiteral("正在安装或恢复 WinUSB 驱动，请等待操作完成后再关闭。")));
+        event->ignore();
         return;
     }
 
-    QMessageBox::warning(this, I18n::t(QStringLiteral("USB ACL 清理失败")),
-                         I18n::tf(QStringLiteral("USB ACL 清理失败：{error}"),
-                                  {{QStringLiteral("error"), error}}));
-    event->ignore();
+    QString aclError;
+    if (!m_usbAccess.revoke(&aclError)) {
+        QMessageBox::warning(this, I18n::t(QStringLiteral("USB ACL 清理失败")),
+                             I18n::tf(QStringLiteral("USB ACL 清理失败：{error}"),
+                                      {{QStringLiteral("error"), aclError}}));
+        event->ignore();
+        return;
+    }
+
+    // Opt-in: restore the original driver before the process exits. This is a
+    // blocking FFI call (one UAC prompt at most), matching the synchronous ACL
+    // cleanup above; a failure blocks the close instead of hiding a WinUSB
+    // driver left behind on the device.
+    if (m_state.restoreDriverOnExit) {
+        QString driverError;
+        qInfo().noquote() << "closeEvent: restoring the pending WinUSB driver";
+        if (!restoreDriverBeforeClose(&driverError)) {
+            qWarning().noquote() << "closeEvent: driver restore failed:" << driverError;
+            const auto choice = QMessageBox::question(
+                this, I18n::t(QStringLiteral("恢复原始驱动失败")),
+                I18n::tf(QStringLiteral("恢复原始驱动失败：{error}"),
+                         {{QStringLiteral("error"), driverError}})
+                    + QStringLiteral("\n\n") + I18n::t(QStringLiteral("是否仍然退出？")),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (choice == QMessageBox::Yes) {
+                event->accept();
+                return;
+            }
+            event->ignore();
+            return;
+        }
+    }
+
+    event->accept();
 }
 
 // ==============================================================================
@@ -376,6 +413,10 @@ void MainWindow::connectBridge()
         logLine(I18n::tf(QStringLiteral("扫描完成，发现 {n} 个 USB 设备"),
                          {{QStringLiteral("n"), m_state.devices.size()}}));
 
+        // First scan finished: ask the backend for the WinUSB driver state.
+        if (!m_state.driver.known)
+            refreshDriverStatus();
+
         updateChrome();
         refreshPages();
     });
@@ -402,6 +443,15 @@ void MainWindow::connectBridge()
     connect(&m_bridge, &RustBridge::logLine, this, [this](const QString &line) {
         logLine(line);
     });
+
+    connect(&m_bridge, &RustBridge::taskRejected, this, [this](const QString &reason) {
+        if (reason.isEmpty() || reason == QLatin1String("busy"))
+            showToast(I18n::t(QStringLiteral("当前操作不可用")), Tone::Warning);
+        else
+            showToast(reason, Tone::Warning);
+    });
+
+    connect(&m_bridge, &RustBridge::driverFinished, this, &MainWindow::handleDriverFinished);
 
     connect(&m_bridge, &RustBridge::taskFinished, this,
             [this](const QString &label, bool ok, const QJsonObject &data, const QString &kind,
@@ -448,6 +498,22 @@ void MainWindow::connectBridge()
                                        {{QStringLiteral("kind"), kind},
                                         {QStringLiteral("message"), message}}),
                               Tone::Error);
+
+                    if (kind == QLatin1String("DriverError")) {
+                        // Remember the device and the task so a successful driver
+                        // install can retry it automatically.
+                        const QJsonObject request = m_state.lastTaskRequest;
+                        m_state.hasDriverTarget = true;
+                        m_state.driverTargetVid = static_cast<quint16>(
+                            request.value(QStringLiteral("vid")).toInt());
+                        m_state.driverTargetPid = static_cast<quint16>(
+                            request.value(QStringLiteral("pid")).toInt());
+                        m_state.hasRetryTask = !request.isEmpty();
+                        logLine(I18n::t(QStringLiteral(
+                            "该设备需要 WinUSB 驱动；可在概览页的 WinUSB 驱动卡片中安装。")));
+                        goToPage(PageId::Overview);
+                        refreshDriverStatus();
+                    }
                 }
 
                 updateChrome();
@@ -496,8 +562,15 @@ void MainWindow::startTask(const QJsonObject &task, const QString &labelKey)
     const QString label = I18n::t(labelKey);
     m_state.busy = true;
     m_state.busyLabel = label;
+    m_state.lastTaskRequest = taskRequest;
     logLine(QStringLiteral("▶ ") + label);
-    m_bridge.runAsync(taskRequest, label);
+    if (!m_bridge.runAsync(taskRequest, label)) {
+        m_state.busy = false;
+        m_state.busyLabel.clear();
+        updateChrome();
+        refreshPages();
+        return;
+    }
     updateChrome();
     refreshPages();
 }
@@ -534,7 +607,12 @@ void MainWindow::scanDevices(bool filtered)
     m_state.devices.clear();
     m_state.scanning = true;
     m_state.scanError.clear();
-    m_bridge.scanAsync(vid, pid);
+    if (!m_bridge.scanAsync(vid, pid)) {
+        m_state.scanning = false;
+        updateChrome();
+        refreshPages();
+        return;
+    }
     updateChrome();
     refreshPages();
 }
@@ -591,6 +669,251 @@ void MainWindow::selectDevice(int index, bool announce)
         logLine(message);
         showToast(message, Tone::Primary);
     }
+}
+
+// ==============================================================================
+// WinUSB driver (WinUSB driver card page hooks)
+// ==============================================================================
+
+void MainWindow::refreshDriverStatus()
+{
+    if (m_bridge.busy()) {
+        // The worker is owned by a scan/task/driver operation; retry shortly.
+        // Status polling is internal, so it must never toast a rejection.
+        if (m_driverStatusRetries < 8) {
+            ++m_driverStatusRetries;
+            QTimer::singleShot(1200, this, [this] { refreshDriverStatus(); });
+        }
+        return;
+    }
+    m_driverStatusRetries = 0;
+    m_bridge.driverStatusAsync();
+}
+
+bool MainWindow::installDriver(quint16 vid, quint16 pid, bool restoreOnExit)
+{
+    if (m_bridge.busy() || m_state.busy || m_state.scanning) {
+        showToast(I18n::t(QStringLiteral("当前操作不可用")), Tone::Warning);
+        return false;
+    }
+
+    m_state.restoreDriverOnExit = restoreOnExit;
+    m_state.driver.busy = true;
+    m_state.driver.busyOp = QStringLiteral("install");
+    m_state.busy = true;
+    m_state.busyLabel = I18n::t(QStringLiteral("正在安装 WinUSB 驱动…"));
+    logLine(m_state.busyLabel);
+    if (!m_state.driver.logPath.isEmpty())
+        logLine(I18n::tf(QStringLiteral("驱动日志：{path}"),
+                         {{QStringLiteral("path"), m_state.driver.logPath}}));
+
+    if (!m_bridge.driverInstallAsync(static_cast<int>(vid), static_cast<int>(pid),
+                                     restoreOnExit)) {
+        m_state.driver.busy = false;
+        m_state.driver.busyOp.clear();
+        m_state.busy = false;
+        m_state.busyLabel.clear();
+        updateChrome();
+        refreshPages();
+        return false;
+    }
+
+    updateChrome();
+    refreshPages();
+    return true;
+}
+
+bool MainWindow::restoreDriver(quint16 vid, quint16 pid)
+{
+    if (m_bridge.busy() || m_state.busy || m_state.scanning) {
+        showToast(I18n::t(QStringLiteral("当前操作不可用")), Tone::Warning);
+        return false;
+    }
+
+    m_state.driver.busy = true;
+    m_state.driver.busyOp = QStringLiteral("restore");
+    m_state.busy = true;
+    m_state.busyLabel = I18n::t(QStringLiteral("正在恢复原始驱动…"));
+    logLine(m_state.busyLabel);
+    if (!m_state.driver.logPath.isEmpty())
+        logLine(I18n::tf(QStringLiteral("驱动日志：{path}"),
+                         {{QStringLiteral("path"), m_state.driver.logPath}}));
+
+    if (!m_bridge.driverRestoreAsync(static_cast<int>(vid), static_cast<int>(pid))) {
+        m_state.driver.busy = false;
+        m_state.driver.busyOp.clear();
+        m_state.busy = false;
+        m_state.busyLabel.clear();
+        updateChrome();
+        refreshPages();
+        return false;
+    }
+
+    updateChrome();
+    refreshPages();
+    return true;
+}
+
+void MainWindow::handleDriverFinished(const QString &op, bool ok, const QJsonObject &data,
+                                      const QString &kind, const QString &message)
+{
+    if (op == QLatin1String("status")) {
+        if (ok) {
+            applyDriverStatus(data);
+        } else {
+            const QString detail = message.isEmpty() ? kind : kind + QStringLiteral(": ") + message;
+            logLine(I18n::tf(QStringLiteral("无法读取驱动状态：{message}"),
+                             {{QStringLiteral("message"), detail}}));
+        }
+        refreshPages();
+        return;
+    }
+
+    m_state.driver.busy = false;
+    m_state.driver.busyOp.clear();
+    m_state.busy = false;
+    m_state.busyLabel.clear();
+
+    if (ok && op == QLatin1String("install")) {
+        const quint16 vid = static_cast<quint16>(data.value(QStringLiteral("vid")).toInt());
+        const quint16 pid = static_cast<quint16>(data.value(QStringLiteral("pid")).toInt());
+        const QString target = QStringLiteral("%1:%2")
+                                   .arg(vid, 4, 16, QLatin1Char('0'))
+                                   .arg(pid, 4, 16, QLatin1Char('0'));
+        logLine(I18n::tf(QStringLiteral("已为 {target} 安装 WinUSB 驱动"),
+                         {{QStringLiteral("target"), target}}));
+        showToast(I18n::tf(QStringLiteral("已为 {target} 安装 WinUSB 驱动"),
+                           {{QStringLiteral("target"), target}}),
+                  Tone::Success);
+
+        m_state.hasDriverTarget = false;
+        if (m_state.hasRetryTask && !m_state.lastTaskRequest.isEmpty()) {
+            const QJsonObject request = m_state.lastTaskRequest;
+            const QString label = m_state.lastTaskLabel;
+            m_state.hasRetryTask = false;
+            logLine(I18n::t(QStringLiteral("WinUSB 驱动已安装，正在重试…")));
+            if (m_bridge.runAsync(request, label)) {
+                m_state.busy = true;
+                m_state.busyLabel = label;
+            } else {
+                m_state.hasRetryTask = true;
+            }
+        } else {
+            refreshDriverStatus();
+        }
+    } else if (ok && op == QLatin1String("restore")) {
+        logLine(I18n::t(QStringLiteral("已恢复原始 USB 驱动")));
+        showToast(I18n::t(QStringLiteral("已恢复原始 USB 驱动")), Tone::Primary);
+        m_state.hasDriverTarget = false;
+        m_state.hasRetryTask = false;
+        refreshDriverStatus();
+    } else {
+        const QString detail = message.isEmpty() ? kind : kind + QStringLiteral(": ") + message;
+        logLine(I18n::tf(QStringLiteral("驱动操作失败：{message}"),
+                         {{QStringLiteral("message"), detail}}));
+        showToast(I18n::tf(QStringLiteral("驱动操作失败：{message}"),
+                           {{QStringLiteral("message"), detail}}),
+                  Tone::Error);
+        refreshDriverStatus();
+    }
+
+    updateChrome();
+    refreshPages();
+}
+
+void MainWindow::applyDriverStatus(const QJsonObject &data)
+{
+    DriverInfo &driver = m_state.driver;
+    const bool firstLook = !driver.known;
+    driver.known = true;
+    driver.supported = data.value(QStringLiteral("supported")).toBool();
+    driver.logPath = data.value(QStringLiteral("log_path")).toString();
+    driver.stateDir = data.value(QStringLiteral("state_dir")).toString();
+    driver.service = data.value(QStringLiteral("service")).toString();
+
+    const QJsonValue pending = data.value(QStringLiteral("pending"));
+    driver.pending = pending.isObject();
+    if (driver.pending) {
+        const QJsonObject record = pending.toObject();
+        driver.pendingVid =
+            static_cast<quint16>(record.value(QStringLiteral("vid")).toInt());
+        driver.pendingPid =
+            static_cast<quint16>(record.value(QStringLiteral("pid")).toInt());
+        driver.pendingRestoreOnExit =
+            record.value(QStringLiteral("restore_on_exit")).toBool();
+        // Do not opt this session in automatically: the crash record only
+        // drives the warning/card, the user decides again whether to restore.
+    } else {
+        driver.pendingVid = 0;
+        driver.pendingPid = 0;
+        driver.pendingRestoreOnExit = false;
+    }
+
+    if (firstLook && driver.pending) {
+        const QString target = driver.pendingTarget();
+        const QString message = I18n::tf(
+            QStringLiteral("上次会话未恢复 {target} 的原始 USB 驱动，可在概览页的 WinUSB 驱动卡片中恢复"),
+            {{QStringLiteral("target"), target}});
+        logLine(message);
+        showToast(message, Tone::Warning);
+        goToPage(PageId::Overview);
+    }
+}
+
+bool MainWindow::restoreDriverBeforeClose(QString *error)
+{
+    // Refresh synchronously: the pending record may have been created by an
+    // install in this very session (restore_on_exit chosen).
+    char *rawStatus = auroku_driver_status();
+    if (rawStatus != nullptr) {
+        const QByteArray bytes(rawStatus);
+        auroku_string_free(rawStatus);
+        const QJsonDocument document = QJsonDocument::fromJson(bytes);
+        if (document.isObject()) {
+            const QJsonObject root = document.object();
+            if (root.value(QStringLiteral("ok")).toBool())
+                applyDriverStatus(root.value(QStringLiteral("data")).toObject());
+        }
+    }
+
+    if (!m_state.driver.pending)
+        return true;
+
+    const quint16 vid = m_state.driver.pendingVid;
+    const quint16 pid = m_state.driver.pendingPid;
+    const QString target = m_state.driver.pendingTarget();
+    logLine(I18n::tf(QStringLiteral("正在恢复 {target} 的原始 USB 驱动…"),
+                     {{QStringLiteral("target"), target}}));
+
+    char *rawRestore = auroku_driver_restore(vid, pid, nullptr, nullptr);
+    bool restored = false;
+    QString message;
+    if (rawRestore == nullptr) {
+        message = QStringLiteral("backend returned a null pointer");
+    } else {
+        const QByteArray bytes(rawRestore);
+        auroku_string_free(rawRestore);
+        const QJsonDocument document = QJsonDocument::fromJson(bytes);
+        const QJsonObject root = document.object();
+        restored = root.value(QStringLiteral("ok")).toBool();
+        if (!restored) {
+            message = root.value(QStringLiteral("message")).toString();
+            if (message.isEmpty())
+                message = root.value(QStringLiteral("kind")).toString();
+            if (message.isEmpty())
+                message = QStringLiteral("unknown error");
+        }
+    }
+
+    if (restored) {
+        m_state.driver.pending = false;
+        logLine(I18n::t(QStringLiteral("已恢复原始 USB 驱动")));
+        return true;
+    }
+
+    if (error != nullptr)
+        *error = message;
+    return false;
 }
 
 void MainWindow::showToast(const QString &text, Tone tone)

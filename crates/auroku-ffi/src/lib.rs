@@ -7,6 +7,10 @@
 //! - [`auroku_scan_devices`] — enumerate USB devices, returns a JSON array.
 //! - [`auroku_run_task`] — run one protocol operation described by a JSON
 //!   request, streams diagnostic lines through a C callback.
+//! - [`auroku_driver_status`] — WinUSB driver state (pending restore, log path).
+//! - [`auroku_driver_install`] / [`auroku_driver_restore`] — WinUSB driver
+//!   provisioning (Windows; other platforms report a `DriverError`).
+//! - [`auroku_state_dir`] — per-user state directory (driver.log / gui.log).
 //! - [`auroku_ffi_version`] — bridge version string.
 //! - [`auroku_string_free`] — release a string returned by this library.
 //!
@@ -34,7 +38,7 @@ use auroku::{
 use serde_json::{json, Map, Value};
 
 /// Version of the C ABI surface. Bump when function signatures change.
-pub const FFI_ABI_VERSION: &str = "1";
+pub const FFI_ABI_VERSION: &str = "2";
 
 /// Receives one human-readable diagnostic line.
 ///
@@ -435,6 +439,139 @@ pub unsafe extern "C" fn auroku_run_task(
     })
 }
 
+// ==============================================================================
+// WinUSB driver provisioning (ABI 2)
+// ==============================================================================
+
+/// Convert a driver record into the JSON representation returned to C++.
+fn driver_record_json(record: &auroku::driver::DriverRecord) -> Value {
+    json!({
+        "vid": record.vid,
+        "pid": record.pid,
+        "installed_at": record.installed_at,
+        "restore_on_exit": record.restore_on_exit,
+        "restored": record.restored,
+    })
+}
+
+/// Build a log sink from the optional C callback.
+fn driver_log_sink(
+    log_callback: AurokuLogCallback,
+    user_data: *mut c_void,
+) -> Option<auroku::driver::DriverLog> {
+    log_callback.map(|callback| {
+        LogBridge {
+            callback,
+            user_data,
+        }
+        .into_sink()
+    })
+}
+
+/// Build the JSON payload of [`auroku_driver_status`].
+fn driver_status_data() -> Value {
+    let pending = auroku::driver::pending_restore();
+    // The current Windows service is only known for a recorded device; the GUI
+    // shows it when the device was left in the WinUSB state by a previous run.
+    let service = pending
+        .as_ref()
+        .and_then(|record| auroku::driver::driver_service(record.vid, record.pid));
+    json!({
+        "supported": cfg!(windows),
+        "pending": pending.as_ref().map(driver_record_json),
+        "service": service,
+        "log_path": auroku::driver::log_path().display().to_string(),
+        "state_dir": auroku::driver::state_dir().display().to_string(),
+    })
+}
+
+/// Report the WinUSB driver state.
+///
+/// Returns a JSON envelope whose `data` is:
+/// `{ supported, pending, service, log_path, state_dir }`. `supported` is only
+/// true on Windows; `pending` is the driver record left by a previous session
+/// that did not restore the original driver (or `null`).
+#[no_mangle]
+pub extern "C" fn auroku_driver_status() -> *mut c_char {
+    guarded(|| Ok(driver_status_data()))
+}
+
+/// Install the WinUSB driver for one device.
+///
+/// Runs `driver::install` synchronously (it may block while Windows shows the
+/// UAC prompt) and streams progress lines through `log_callback`.
+///
+/// `data` on success:
+/// `{ vid, pid, installed_at, restore_on_exit, restored, state_file }`.
+/// Failures use `kind = "DriverError"`.
+///
+/// # Safety
+/// `user_data` must remain valid until this function returns, and
+/// `log_callback` must be safe to call from the invoking thread.
+#[no_mangle]
+pub unsafe extern "C" fn auroku_driver_install(
+    vid: u16,
+    pid: u16,
+    restore_on_exit: bool,
+    log_callback: AurokuLogCallback,
+    user_data: *mut c_void,
+) -> *mut c_char {
+    guarded(|| {
+        let sink = driver_log_sink(log_callback, user_data);
+        let record =
+            auroku::driver::install(vid, pid, restore_on_exit, sink, false).map_err(|message| {
+                ApiError {
+                    kind: "DriverError",
+                    message,
+                }
+            })?;
+        Ok(json!({
+            "vid": record.vid,
+            "pid": record.pid,
+            "installed_at": record.installed_at,
+            "restore_on_exit": record.restore_on_exit,
+            "restored": record.restored,
+            "state_file": auroku::driver::state_path().display().to_string(),
+        }))
+    })
+}
+
+/// Restore the original (usbser) driver for one device.
+///
+/// `data` on success: `{ vid, pid, restored: true }`.
+/// Failures use `kind = "DriverError"`.
+///
+/// # Safety
+/// `user_data` must remain valid until this function returns, and
+/// `log_callback` must be safe to call from the invoking thread.
+#[no_mangle]
+pub unsafe extern "C" fn auroku_driver_restore(
+    vid: u16,
+    pid: u16,
+    log_callback: AurokuLogCallback,
+    user_data: *mut c_void,
+) -> *mut c_char {
+    guarded(|| {
+        let sink = driver_log_sink(log_callback, user_data);
+        auroku::driver::restore(vid, pid, sink, false).map_err(|message| ApiError {
+            kind: "DriverError",
+            message,
+        })?;
+        Ok(json!({ "vid": vid, "pid": pid, "restored": true }))
+    })
+}
+
+/// Per-user state directory (`%LOCALAPPDATA%\auroku` on Windows,
+/// `$XDG_STATE_HOME/auroku` on Linux). Used by the GUI for `gui.log`.
+#[no_mangle]
+pub extern "C" fn auroku_state_dir() -> *mut c_char {
+    guarded(|| {
+        Ok(Value::String(
+            auroku::driver::state_dir().display().to_string(),
+        ))
+    })
+}
+
 /// Free a string returned by this library.
 ///
 /// # Safety
@@ -491,6 +628,73 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error.kind, "ValueError");
+    }
+
+    #[test]
+    fn driver_status_envelope_reports_platform() {
+        let pointer = auroku_driver_status();
+        let text = unsafe { CStr::from_ptr(pointer) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { auroku_string_free(pointer) };
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["ok"], true);
+        let data = &value["data"];
+        assert_eq!(data["supported"], cfg!(windows));
+        assert!(data["log_path"].as_str().unwrap().ends_with("driver.log"));
+        assert!(!data["state_dir"].as_str().unwrap().is_empty());
+        assert!(data["pending"].is_null() || data["pending"].is_object());
+        assert!(data["service"].is_null() || data["service"].is_string());
+    }
+
+    #[test]
+    fn state_dir_envelope_is_a_path() {
+        let pointer = auroku_state_dir();
+        let text = unsafe { CStr::from_ptr(pointer) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { auroku_string_free(pointer) };
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["ok"], true);
+        let path = value["data"].as_str().unwrap();
+        assert!(path.ends_with("auroku"), "unexpected state dir: {path}");
+    }
+
+    #[test]
+    fn driver_errors_use_driver_error_kind() {
+        let pointer = encode(Err(ApiError {
+            kind: "DriverError",
+            message: "boom".to_owned(),
+        }));
+        let text = unsafe { CStr::from_ptr(pointer) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { auroku_string_free(pointer) };
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["kind"], "DriverError");
+        assert_eq!(value["message"], "boom");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn driver_operations_report_unsupported_on_unix() {
+        for pointer in [
+            unsafe { auroku_driver_install(0x04c5, 0x1270, false, None, std::ptr::null_mut()) },
+            unsafe { auroku_driver_restore(0x04c5, 0x1270, None, std::ptr::null_mut()) },
+        ] {
+            let text = unsafe { CStr::from_ptr(pointer) }
+                .to_str()
+                .unwrap()
+                .to_owned();
+            unsafe { auroku_string_free(pointer) };
+            let value: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["ok"], false);
+            assert_eq!(value["kind"], "DriverError");
+        }
     }
 
     #[test]

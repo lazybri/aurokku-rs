@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <cstdint>
 
 #include "FfiApi.h"
 
@@ -72,6 +73,34 @@ void RustWorker::runTask(const QJsonObject &request, const QString &label)
     const Envelope envelope =
         parseEnvelope(auroku_run_task(json.constData(), &RustWorker::logTrampoline, this));
     emit taskFinished(label, envelope.ok, envelope.data.toObject(), envelope.kind, envelope.message);
+}
+
+void RustWorker::driverStatus()
+{
+    emit driverStarted(QStringLiteral("status"));
+    const Envelope envelope = parseEnvelope(auroku_driver_status());
+    emit driverFinished(QStringLiteral("status"), envelope.ok, envelope.data.toObject(),
+                        envelope.kind, envelope.message);
+}
+
+void RustWorker::driverInstall(int vid, int pid, bool restoreOnExit)
+{
+    emit driverStarted(QStringLiteral("install"));
+    const Envelope envelope = parseEnvelope(auroku_driver_install(
+        static_cast<std::uint16_t>(vid), static_cast<std::uint16_t>(pid), restoreOnExit,
+        &RustWorker::logTrampoline, this));
+    emit driverFinished(QStringLiteral("install"), envelope.ok, envelope.data.toObject(),
+                        envelope.kind, envelope.message);
+}
+
+void RustWorker::driverRestore(int vid, int pid)
+{
+    emit driverStarted(QStringLiteral("restore"));
+    const Envelope envelope = parseEnvelope(auroku_driver_restore(
+        static_cast<std::uint16_t>(vid), static_cast<std::uint16_t>(pid),
+        &RustWorker::logTrampoline, this));
+    emit driverFinished(QStringLiteral("restore"), envelope.ok, envelope.data.toObject(),
+                        envelope.kind, envelope.message);
 }
 
 void RustWorker::logTrampoline(const char *line, void *userData)

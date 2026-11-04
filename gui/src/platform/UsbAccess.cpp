@@ -1,9 +1,8 @@
 #include "platform/UsbAccess.h"
 
+#include <QDebug>
 #include <QProcess>
 #include <QStandardPaths>
-
-#include <cstdio>
 
 #if defined(Q_OS_LINUX) || defined(__linux__)
 #include <sys/stat.h>
@@ -105,8 +104,7 @@ UsbAccess::~UsbAccess()
 {
     QString error;
     if (!revoke(&error) && !error.isEmpty())
-        std::fprintf(stderr, "[auroku-gui] failed to restore USB ACL: %s\n",
-                     error.toLocal8Bit().constData());
+        qWarning().noquote() << "failed to restore USB ACL:" << error;
 }
 
 void UsbAccess::clearState()

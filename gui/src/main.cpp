@@ -3,20 +3,101 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QDebug>
+#include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMutex>
 #include <QStandardPaths>
 #include <QStyleFactory>
+#include <QSysInfo>
 #include <QTimer>
 #include <cstring>
 
+#include "core/FfiApi.h"
 #include "ui/Fonts.h"
 #include "ui/I18n.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
 #ifndef AUROKU_APP_VERSION
-#define AUROKU_APP_VERSION "0.2.0-qt6"
+#define AUROKU_APP_VERSION "0.3.2-qt6"
 #endif
+
+namespace {
+
+/// Owns <state_dir>/gui.log. A release build has no console, so every
+/// qDebug/qWarning/qCritical line is mirrored there (truncated on start-up).
+QFile *g_guiLog = nullptr;
+
+QString stateDirFromBackend()
+{
+    char *raw = auroku_state_dir();
+    if (raw == nullptr)
+        return {};
+    const QByteArray bytes(raw);
+    auroku_string_free(raw);
+    const QJsonObject root = QJsonDocument::fromJson(bytes).object();
+    if (!root.value(QStringLiteral("ok")).toBool())
+        return {};
+    return root.value(QStringLiteral("data")).toString();
+}
+
+void guiLogHandler(QtMsgType type, const QMessageLogContext &, const QString &message)
+{
+    static QMutex mutex;
+    const QMutexLocker locker(&mutex);
+    if (g_guiLog == nullptr || !g_guiLog->isOpen())
+        return;
+
+    const char *level = "info";
+    switch (type) {
+    case QtDebugMsg:
+        level = "debug";
+        break;
+    case QtInfoMsg:
+        level = "info";
+        break;
+    case QtWarningMsg:
+        level = "warn";
+        break;
+    case QtCriticalMsg:
+        level = "error";
+        break;
+    case QtFatalMsg:
+        level = "fatal";
+        break;
+    }
+
+    const QString line = QStringLiteral("%1 [%2] %3\n")
+                             .arg(QDateTime::currentDateTime().toString(
+                                 QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz")),
+                                  QString::fromLatin1(level), message);
+    g_guiLog->write(line.toUtf8());
+    g_guiLog->flush();
+}
+
+/// Start writing gui.log before the window exists, so start-up failures are
+/// captured too. The directory comes from the Rust backend (same as
+/// driver.log), so both logs live next to the driver state.
+void installGuiLog()
+{
+    const QString dir = stateDirFromBackend();
+    if (dir.isEmpty())
+        return;
+    QDir().mkpath(dir);
+    auto *file = new QFile(QDir(dir).filePath(QStringLiteral("gui.log")));
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        delete file;
+        return;
+    }
+    g_guiLog = file;
+    qInstallMessageHandler(guiLogHandler);
+}
+
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -48,6 +129,8 @@ int main(int argc, char **argv)
         && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY"))
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("wayland;xcb"));
 #endif
+
+    installGuiLog();
 
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("auRokku"));
@@ -82,6 +165,10 @@ int main(int argc, char **argv)
         if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
             file.write(Theme::instance().styleSheet().toUtf8());
     }
+
+    qInfo().noquote() << QStringLiteral("auRokku %1 starting (Qt %2, %3)")
+                             .arg(QStringLiteral(AUROKU_APP_VERSION), QString::fromLatin1(qVersion()),
+                                  QSysInfo::productType());
 
     MainWindow window;
     window.show();

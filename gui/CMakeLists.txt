@@ -56,10 +56,20 @@ if(UNIX AND NOT APPLE)
     set(AUROKU_FFI_ENV "PKG_CONFIG=/bin/false")
 endif()
 
+# CI exports the pinned static libwdi artifact through LIBWDI_LIB_DIR. Pass the
+# feature through to the FFI crate so the GUI links the in-process WinUSB
+# installer as well (otherwise it would fall back to an external
+# wdi-simple.exe that release packages do not ship).
+set(AUROKU_FFI_FEATURES "")
+if(WIN32 AND DEFINED ENV{LIBWDI_LIB_DIR} AND EXISTS "$ENV{LIBWDI_LIB_DIR}")
+    set(AUROKU_FFI_FEATURES "--features" "auroku-ffi/static-libwdi")
+    message(STATUS "Static libwdi: $ENV{LIBWDI_LIB_DIR}")
+endif()
+
 add_custom_target(auroku_ffi_build ALL
     COMMAND "${CMAKE_COMMAND}" -E env ${AUROKU_FFI_ENV}
             "${CARGO_EXECUTABLE}" build --locked --manifest-path "${AUROKU_ROOT}/Cargo.toml"
-            -p auroku-ffi ${AUROKU_CARGO_FLAGS}
+            -p auroku-ffi ${AUROKU_FFI_FEATURES} ${AUROKU_CARGO_FLAGS}
     WORKING_DIRECTORY "${AUROKU_ROOT}"
     BYPRODUCTS "${FFI_LIBRARY}"
     COMMENT "Building auroku-ffi (Rust C ABI, ${AUROKU_PROFILE_DIR})"
@@ -139,9 +149,14 @@ set_target_properties(auroku-qt PROPERTIES OUTPUT_NAME "auroku-gui")
 add_dependencies(auroku-qt auroku_ffi_build)
 target_link_libraries(auroku-qt PRIVATE Qt6::Widgets auroku_ffi Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
-    # System libraries referenced by the Rust standard library and libusb.
+    # System import libraries referenced by the Rust standard library, libusb
+    # and the statically linked libwdi (the list mirrors
+    # auroku-driver-sys/build.rs; the staticlib .drectve usually provides them,
+    # but listing them keeps MSVC/MinGW link order stable).
     target_link_libraries(auroku-qt PRIVATE ws2_32 userenv bcrypt ntdll advapi32
-        ole32 setupapi cfgmgr32 dbghelp user32 hid)
+        ole32 setupapi cfgmgr32 dbghelp user32 hid
+        gdi32 comctl32 crypt32 wintrust version shlwapi msi shell32 oleaut32 uuid
+        comdlg32 winspool)
 elseif(APPLE)
     # Rust std (Security), libusb's IOKit backend and its Objective-C runtime.
     target_link_libraries(auroku-qt PRIVATE "-framework CoreFoundation" "-framework IOKit"

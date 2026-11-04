@@ -26,6 +26,14 @@ public:
     /// Copy a scanned device into the device form.
     virtual void selectDevice(int index, bool announce) = 0;
 
+    /// Fetch the WinUSB driver state (WinUSB driver card / startup check).
+    virtual void refreshDriverStatus() = 0;
+
+    /// Install / restore the WinUSB driver for one device. Returns false when
+    /// the request could not be queued (the caller already got a toast).
+    virtual bool installDriver(quint16 vid, quint16 pid, bool restoreOnExit) = 0;
+    virtual bool restoreDriver(quint16 vid, quint16 pid) = 0;
+
     /// Show a transient toast in the bottom-right corner.
     virtual void showToast(const QString &text, Tone tone) = 0;
 

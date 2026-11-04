@@ -88,7 +88,10 @@ CLI 的全部 `--op` 操作，并在控制台页面显示 USB TX / RX 日志和�
 
 Windows 会把该设备当作“USB 串行设备（COMx）”，因为系统把 `usbser.sys` 绑定到
 整个 CDC 设备；只有在为**该设备**安装 WinUSB 驱动后（一次标准 UAC 提权），
-libusb 才能打开它。CLI 与 GUI 使用同一套一键安装 / 恢复流程：
+libusb 才能打开它。CLI 与 GUI 使用同一套一键安装 / 恢复流程。Qt GUI 在
+“概览”页提供 **WinUSB 驱动** 卡片：安装 / 恢复按钮、“退出时自动恢复”开关、
+当前 service 与可复制的 `driver.log` 路径；任务因 `DriverError` 失败时会跳到该
+卡片，安装成功后自动重试。
 
 ```bat
 auroku --op install-driver --vid 04C5 --pid 1270

@@ -108,7 +108,11 @@ the full JSON result.
 On Windows the device enumerates as "USB Serial Device" (COMx) because Windows
 binds `usbser.sys` to the whole CDC device; libusb can only open it after a
 WinUSB driver has been installed for **that device** (one standard UAC prompt).
-The CLI and the GUI offer the same one-click install/restore path:
+The CLI and the GUI offer the same one-click install/restore path. The Qt GUI
+surfaces it as a **WinUSB driver** card on the Overview page: install / restore
+buttons, a "restore on exit" opt-in, the current service and the copyable
+`driver.log` path. A task that fails with `DriverError` jumps to that card and
+is retried automatically after a successful install.
 
 ```bat
 auroku --op install-driver --vid 04C5 --pid 1270

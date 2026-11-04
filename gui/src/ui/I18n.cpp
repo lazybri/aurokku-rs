@@ -336,6 +336,65 @@ const QHash<QString, QString> &english()
         t[QStringLiteral("VID / PID 格式无效")] = QStringLiteral("Invalid VID / PID format");
         t[QStringLiteral("无效的十六进制值：{text}")] = QStringLiteral("Invalid hex value: {text}");
         t[QStringLiteral("无效的十六进制字节：{text}")] = QStringLiteral("Invalid hex byte: {text}");
+        // WinUSB driver (ABI 2) ------------------------------------------------
+        t[QStringLiteral("WinUSB 驱动")] = QStringLiteral("WinUSB driver");
+        t[QStringLiteral("Windows 上设备默认由 usbser.sys 占用，需要安装 WinUSB 驱动才能访问")] =
+            QStringLiteral("On Windows the device is owned by usbser.sys by default; install the WinUSB driver to access it");
+        t[QStringLiteral("安装 WinUSB 驱动")] = QStringLiteral("Install WinUSB driver");
+        t[QStringLiteral("恢复原驱动")] = QStringLiteral("Restore original driver");
+        t[QStringLiteral("退出时自动恢复原驱动")] =
+            QStringLiteral("Restore the original driver on exit");
+        t[QStringLiteral("该设备当前由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。")] =
+            QStringLiteral("This device is owned by usbser.sys; libusb needs the WinUSB driver to access it. Installing asks for UAC confirmation once.");
+        t[QStringLiteral("正在安装 WinUSB 驱动…")] =
+            QStringLiteral("Installing the WinUSB driver…");
+        t[QStringLiteral("正在安装 WinUSB 驱动（需要管理员确认）…")] =
+            QStringLiteral("Installing the WinUSB driver (administrator confirmation required)…");
+        t[QStringLiteral("正在恢复原始驱动…")] =
+            QStringLiteral("Restoring the original driver…");
+        t[QStringLiteral("正在恢复原始驱动（需要管理员确认）…")] =
+            QStringLiteral("Restoring the original driver (administrator confirmation required)…");
+        t[QStringLiteral("已为 {target} 安装 WinUSB 驱动")] =
+            QStringLiteral("Installed the WinUSB driver for {target}");
+        t[QStringLiteral("WinUSB 驱动已安装，正在重试…")] =
+            QStringLiteral("WinUSB driver installed; retrying…");
+        t[QStringLiteral("已为 {target} 恢复原始 USB 驱动")] =
+            QStringLiteral("Restored the original USB driver for {target}");
+        t[QStringLiteral("已恢复原始 USB 驱动")] =
+            QStringLiteral("Restored the original USB driver");
+        t[QStringLiteral("驱动操作失败：{message}")] =
+            QStringLiteral("Driver operation failed: {message}");
+        t[QStringLiteral("驱动日志：{path}")] = QStringLiteral("Driver log: {path}");
+        t[QStringLiteral("上次会话未恢复 {target} 的原始 USB 驱动，可在概览页的 WinUSB 驱动卡片中恢复")] =
+            QStringLiteral("The previous session did not restore the original USB driver for {target}; restore it from the WinUSB driver card on the Overview page");
+        t[QStringLiteral("正在恢复 {target} 的原始 USB 驱动…")] =
+            QStringLiteral("Restoring the original USB driver for {target}…");
+        t[QStringLiteral("该设备需要 WinUSB 驱动；可在概览页的 WinUSB 驱动卡片中安装。")] =
+            QStringLiteral("This device needs the WinUSB driver; install it from the WinUSB driver card on the Overview page.");
+        t[QStringLiteral("正在处理 WinUSB 驱动操作…")] =
+            QStringLiteral("WinUSB driver operation in progress…");
+        t[QStringLiteral("正在读取驱动状态…")] = QStringLiteral("Reading the driver state…");
+        t[QStringLiteral("选择设备后可安装或恢复 WinUSB 驱动")] =
+            QStringLiteral("Select a device to install or restore the WinUSB driver");
+        t[QStringLiteral("目标设备：{target}")] = QStringLiteral("Target device: {target}");
+        t[QStringLiteral("当前 Service：{service}")] = QStringLiteral("Current service: {service}");
+        t[QStringLiteral("当前 Service：usbser.sys（需要替换）")] =
+            QStringLiteral("Current service: usbser.sys (needs replacing)");
+        t[QStringLiteral("已复制驱动日志路径")] =
+            QStringLiteral("Driver log path copied");
+        t[QStringLiteral("复制路径")] = QStringLiteral("Copy path");
+        t[QStringLiteral("无法读取驱动状态：{message}")] =
+            QStringLiteral("Could not read the driver state: {message}");
+        t[QStringLiteral("驱动操作进行中")] =
+            QStringLiteral("Driver operation in progress");
+        t[QStringLiteral("正在安装或恢复 WinUSB 驱动，请等待操作完成后再关闭。")] =
+            QStringLiteral("A WinUSB driver operation is running; wait for it to finish before closing.");
+        t[QStringLiteral("恢复原始驱动失败")] =
+            QStringLiteral("Failed to restore the original driver");
+        t[QStringLiteral("恢复原始驱动失败：{error}")] =
+            QStringLiteral("Failed to restore the original driver: {error}");
+        t[QStringLiteral("是否仍然退出？")] = QStringLiteral("Quit anyway?");
+
         return t;
     }();
     return table;

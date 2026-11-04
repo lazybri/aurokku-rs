@@ -44,6 +44,60 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
+# ---------------------------------------------------------------------------
+# Static CRT / dependency verification
+# ---------------------------------------------------------------------------
+# Everything except the operating system itself is linked statically (Rust
+# std, libusb, libwdi). The PE import table must therefore never mention a
+# dynamic C runtime or a sibling DLL.
+
+function Find-Dumpbin {
+    $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual StudioInstallerswhere.exe'
+    if (Test-Path $vswhere) {
+        $found = & $vswhere -latest -products * -find 'VCToolsMSVC**inHostx64ddumpbin.exe' 2>$null
+        if ($found) { return @($found)[0] }
+    }
+    $command = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    return $null
+}
+
+function Assert-StaticRuntime {
+    param(
+        [string]$Exe,
+        [string]$Dumpbin
+    )
+
+    $lines = @(& $Dumpbin /nologo /dependents $Exe)
+    $header = $lines | Select-String -Pattern 'Image has the following dependencies' | Select-Object -First 1
+    if (-not $header) { throw "unexpected dumpbin output for $Exe" }
+
+    $imports = @()
+    for ($i = $header.LineNumber; $i -lt $lines.Count; $i++) {
+        $text = $lines[$i].Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            if ($imports.Count -gt 0) { break }
+            continue
+        }
+        if ($text -match '(?i).dll$') { $imports += $text.ToLowerInvariant() }
+    }
+    if ($imports.Count -eq 0) { throw "could not parse the import table of $Exe" }
+
+    $banned = @(
+        'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll',
+        'concrt140.dll', 'ucrtbase.dll',
+        'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'winpthread-1.dll'
+    )
+    $bad = $imports | Where-Object {
+        ($banned -contains $_) -or ($_ -like 'vcruntime*') -or ($_ -like 'msvcp140*') -or ($_ -like 'api-ms-win-crt-*')
+    }
+    if ($bad) {
+        throw ("{0} still imports a dynamic C runtime: {1}" -f $Exe, ($bad -join ', '))
+    }
+
+    Write-Host ("    {0}: {1} imports -> {2}" -f (Split-Path $Exe -Leaf), $imports.Count, ($imports -join ', '))
+}
+
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     throw 'cargo not found. Install Rust: https://rustup.rs'
 }
@@ -193,6 +247,10 @@ if (-not $SkipGui) {
         # Remove the bridge left next to the GUI by older builds.
         Remove-Item (Join-Path $guiDir 'auroku_ffi.dll') -Force -ErrorAction SilentlyContinue
         Copy-Item (Join-Path $buildDir 'auroku-gui.exe') $guiDir -Force
+        # elevate_self() looks for auroku.exe in the directory of the running
+        # GUI, so ship the CLI inside the GUI folder as well (the UAC prompt
+        # then shows auroku.exe, matching the documented behaviour).
+        Copy-Item $distExe (Join-Path $guiDir 'auroku.exe') -Force
         Get-ChildItem $buildDir -Filter 'Qt6*.dll' | Copy-Item -Destination $guiDir -Force
         foreach ($plugin in @('platforms', 'styles', 'imageformats', 'tls', 'generic', 'networkinformation')) {
             $source = Join-Path $buildDir $plugin
@@ -301,6 +359,22 @@ if ($license) {
     throw 'static-libwdi is enabled but no COPYING-LGPL was found (looked in LIBWDI_LIB_DIR and libwdi\COPYING-LGPL); refusing to package an LGPLv3 static link without its license'
 } else {
     Write-Host '==> libwdi is not linked; no LGPL license file to bundle'
+}
+
+if ($guiDir -and $license) {
+    Copy-Item $licenseCopy (Join-Path $guiDir 'LICENSE-LGPL-3.0.txt') -Force
+}
+
+if ($Target -like '*-msvc') {
+    $dumpbin = Find-Dumpbin
+    if (-not $dumpbin) { throw 'dumpbin.exe not found; cannot verify the static C runtime' }
+    Write-Host '==> Verifying static CRT (only OS DLLs may be imported)'
+    Assert-StaticRuntime -Exe $distExe -Dumpbin $dumpbin
+    if ($guiDir) {
+        Assert-StaticRuntime -Exe (Join-Path $guiDir 'auroku-gui.exe') -Dumpbin $dumpbin
+    }
+} else {
+    Write-Host '==> MSVC not targeted; skipped the dumpbin static-CRT assertion'
 }
 
 $zip = Join-Path $distDir "auroku-windows-$arch$zipSuffix.zip"

@@ -32,6 +32,9 @@ public:
     void startTask(const QJsonObject &task, const QString &labelKey) override;
     void scanDevices(bool filtered) override;
     void selectDevice(int index, bool announce) override;
+    void refreshDriverStatus() override;
+    bool installDriver(quint16 vid, quint16 pid, bool restoreOnExit) override;
+    bool restoreDriver(quint16 vid, quint16 pid) override;
     void showToast(const QString &text, Tone tone) override;
     void confirmAction(const QString &titleKey, const QString &body, const QString &actionKey,
                        const std::function<void()> &action) override;
@@ -49,6 +52,11 @@ private:
     void connectBridge();
 
     void logLine(const QString &text);
+    void handleDriverFinished(const QString &op, bool ok, const QJsonObject &data,
+                              const QString &kind, const QString &message);
+    void applyDriverStatus(const QJsonObject &data);
+    /// Restore a pending WinUSB driver before closing; returns false on failure.
+    bool restoreDriverBeforeClose(QString *error);
     void updateChrome();
     void refreshPages();
     void retranslateUi();
@@ -85,4 +93,5 @@ private:
     QTimer *m_toastTimer = nullptr;
 
     bool m_updatingLanguage = false;
+    int m_driverStatusRetries = 0;
 };
