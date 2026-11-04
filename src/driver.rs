@@ -587,6 +587,315 @@ pub fn restore_usbser(_log: Option<DriverLog>, _append_log: bool) -> Result<(), 
     Err("usbser.sys service control is only supported on Windows".to_owned())
 }
 
+// --------------------------------------------------------------------------
+// Device installation policy: block usbser.sys before first install
+// --------------------------------------------------------------------------
+
+/// Ports device setup class GUID (usbser.inf belongs to this class).
+#[cfg(windows)]
+const PORTS_CLASS_GUID: &str = "{4d36e978-e325-11ce-bfc1-08002be10318}";
+/// Device installation restrictions policy root.
+#[cfg(windows)]
+const DEVICE_INSTALL_POLICY_KEY: &str =
+    "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeviceInstall\\Restrictions";
+/// DenyDeviceClasses subkey of the restrictions policy.
+#[cfg(windows)]
+const DENY_DEVICE_CLASSES_KEY: &str =
+    "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeviceInstall\\Restrictions\\DenyDeviceClasses";
+/// Policy entry used by auRokku (only one class is denied).
+#[cfg(windows)]
+const DENY_DEVICE_CLASSES_ENTRY_KEY: &str =
+    "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeviceInstall\\Restrictions\\DenyDeviceClasses\\1";
+/// Saved policy state, so Restore can undo exactly what was added.
+#[cfg(windows)]
+const POLICY_STATE_FILE: &str = "usbser-policy-state.json";
+/// Export of the previous restrictions key (if it existed).
+#[cfg(windows)]
+const POLICY_BACKUP_FILE: &str = "device-install-policy-backup.reg";
+
+#[cfg(windows)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PolicyRecord {
+    key_existed: bool,
+    backup_file: bool,
+    applied_at: u64,
+}
+
+#[cfg(windows)]
+impl PolicyRecord {
+    fn to_json(&self) -> Value {
+        json!({
+            "key_existed": self.key_existed,
+            "backup_file": self.backup_file,
+            "applied_at": self.applied_at,
+        })
+    }
+
+    fn from_json(value: &Value) -> Option<Self> {
+        Some(Self {
+            key_existed: value.get("key_existed")?.as_bool()?,
+            backup_file: value.get("backup_file")?.as_bool()?,
+            applied_at: value.get("applied_at")?.as_u64()?,
+        })
+    }
+}
+
+#[cfg(windows)]
+fn policy_state_path() -> PathBuf {
+    state_dir().join(POLICY_STATE_FILE)
+}
+
+#[cfg(windows)]
+fn policy_backup_path() -> PathBuf {
+    state_dir().join(POLICY_BACKUP_FILE)
+}
+
+#[cfg(windows)]
+fn load_policy_record() -> Option<PolicyRecord> {
+    let text = fs::read_to_string(policy_state_path()).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    PolicyRecord::from_json(&value)
+}
+
+#[cfg(windows)]
+fn save_policy_record(record: &PolicyRecord) -> Result<(), String> {
+    let path = policy_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    let text = serde_json::to_string_pretty(&record.to_json())
+        .map_err(|error| format!("cannot encode policy state: {error}"))?;
+    fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+#[cfg(windows)]
+fn clear_policy_record() {
+    let _ = fs::remove_file(policy_state_path());
+}
+
+#[cfg(windows)]
+fn run_reg(args: &[&str]) -> Result<std::process::Output, String> {
+    use std::os::windows::process::CommandExt;
+
+    std::process::Command::new("reg")
+        .args(args)
+        .creation_flags(0x0800_0000)
+        .output()
+        .map_err(|error| format!("cannot run reg.exe: {error}"))
+}
+
+#[cfg(windows)]
+fn reg_key_exists(key: &str) -> bool {
+    run_reg(&["query", key])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn reg_query_string(key: &str, value_name: &str) -> Option<String> {
+    let output = run_reg(&["query", key, "/v", value_name]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        if parts.next() != Some(value_name) {
+            continue;
+        }
+        if parts.next() != Some("REG_SZ") {
+            return None;
+        }
+        let value = parts.collect::<Vec<_>>().join(" ");
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn export_policy_backup(path: &std::path::Path) -> Result<bool, String> {
+    if !reg_key_exists(DEVICE_INSTALL_POLICY_KEY) {
+        return Ok(false);
+    }
+    let path_text = path.display().to_string();
+    let output = run_reg(&["export", DEVICE_INSTALL_POLICY_KEY, &path_text, "/y"])?;
+    if !output.status.success() {
+        return Err(format!(
+            "reg.exe export of the device-install policy failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn import_policy_backup(path: &std::path::Path) -> Result<(), String> {
+    let path_text = path.display().to_string();
+    let output = run_reg(&["import", &path_text])?;
+    if !output.status.success() {
+        return Err(format!(
+            "reg.exe import of the device-install policy failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn refresh_device_install_policy() {
+    use std::os::windows::process::CommandExt;
+
+    // Device installation restrictions are read from the policy key; a policy
+    // refresh makes the change visible sooner.
+    let _ = std::process::Command::new("gpupdate")
+        .args(["/force"])
+        .creation_flags(0x0800_0000)
+        .output();
+}
+
+/// Block new Ports-class driver installations, so usbser.inf cannot take over
+/// a device on its first Windows connection.
+///
+/// This is a test-machine helper: while it is active, new COM/USB-serial
+/// devices cannot install either. It does not affect devices that are already
+/// installed. Undo with restore_usbser_policy.
+#[cfg(windows)]
+pub fn block_usbser_install(log: Option<DriverLog>, append_log: bool) -> Result<(), String> {
+    if !append_log {
+        reset_log("block-usbser-install");
+    }
+    if !is_elevated() {
+        emit(&log, "需要管理员权限，正在请求 UAC 确认…");
+        return elevate_self(&driver_args("block-usbser-install", 0, 0));
+    }
+
+    if reg_query_string(DENY_DEVICE_CLASSES_ENTRY_KEY, "DeviceClass")
+        .is_some_and(|value| value.eq_ignore_ascii_case(PORTS_CLASS_GUID))
+    {
+        emit(&log, "Ports 类安装限制已处于启用状态");
+        return Ok(());
+    }
+
+    if let Some(existing) = reg_query_string(DENY_DEVICE_CLASSES_ENTRY_KEY, "DeviceClass") {
+        return Err(format!(
+            "设备安装限制的 DenyDeviceClasses\\1 已被其它类占用（{existing}）；请先清理后再试"
+        ));
+    }
+
+    if !policy_state_path().exists() {
+        let _ = fs::remove_file(policy_backup_path());
+        let had_backup = export_policy_backup(&policy_backup_path())?;
+        save_policy_record(&PolicyRecord {
+            key_existed: had_backup,
+            backup_file: had_backup,
+            applied_at: now_unix(),
+        })?;
+    }
+
+    let output = run_reg(&[
+        "add",
+        DEVICE_INSTALL_POLICY_KEY,
+        "/v",
+        "DenyDeviceClasses",
+        "/t",
+        "REG_DWORD",
+        "/d",
+        "1",
+        "/f",
+    ])?;
+    if !output.status.success() {
+        return Err(format!(
+            "无法启用 DenyDeviceClasses：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let output = run_reg(&[
+        "add",
+        DENY_DEVICE_CLASSES_ENTRY_KEY,
+        "/v",
+        "DeviceClass",
+        "/t",
+        "REG_SZ",
+        "/d",
+        PORTS_CLASS_GUID,
+        "/f",
+    ])?;
+    if !output.status.success() {
+        return Err(format!(
+            "无法写入 Ports 类安装限制：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    refresh_device_install_policy();
+    emit(
+        &log,
+        "已阻止 Ports 类驱动的新安装（usbser.inf）；插入设备后会停在无驱动状态，安装 WinUSB 后请点击恢复策略",
+    );
+    Ok(())
+}
+
+/// Block new Ports-class driver installations (non-Windows stub).
+#[cfg(not(windows))]
+pub fn block_usbser_install(_log: Option<DriverLog>, _append_log: bool) -> Result<(), String> {
+    Err("device installation policy control is only supported on Windows".to_owned())
+}
+
+/// Restore the device installation policy saved by block_usbser_install.
+#[cfg(windows)]
+pub fn restore_usbser_policy(log: Option<DriverLog>, append_log: bool) -> Result<(), String> {
+    if !append_log {
+        reset_log("restore-usbser-policy");
+    }
+    if !is_elevated() {
+        emit(&log, "需要管理员权限，正在请求 UAC 确认…");
+        return elevate_self(&driver_args("restore-usbser-policy", 0, 0));
+    }
+
+    let Some(record) = load_policy_record() else {
+        return Err("没有找到由 auRokku 保存的设备安装策略状态，未做修改".to_owned());
+    };
+
+    // Always remove our explicit entry first. reg import() restores values but
+    // does not delete entries that were not in the backup, so a stale backup
+    // must not be the only cleanup step.
+    let _ = run_reg(&["delete", DENY_DEVICE_CLASSES_ENTRY_KEY, "/f"]);
+    let _ = run_reg(&[
+        "delete",
+        DEVICE_INSTALL_POLICY_KEY,
+        "/v",
+        "DenyDeviceClasses",
+        "/f",
+    ]);
+
+    if record.backup_file && policy_backup_path().is_file() {
+        import_policy_backup(&policy_backup_path())?;
+    } else if !record.key_existed {
+        let _ = run_reg(&["delete", DENY_DEVICE_CLASSES_KEY, "/f"]);
+    }
+
+    if reg_query_string(DENY_DEVICE_CLASSES_ENTRY_KEY, "DeviceClass")
+        .is_some_and(|value| value.eq_ignore_ascii_case(PORTS_CLASS_GUID))
+    {
+        return Err("恢复设备安装策略后仍检测到 Ports 类限制，请检查注册表".to_owned());
+    }
+
+    let _ = fs::remove_file(policy_backup_path());
+    clear_policy_record();
+    refresh_device_install_policy();
+    emit(&log, "已恢复设备安装策略（Ports 类不再被阻止）");
+    Ok(())
+}
+
+/// Restore the device installation policy (non-Windows stub).
+#[cfg(not(windows))]
+pub fn restore_usbser_policy(_log: Option<DriverLog>, _append_log: bool) -> Result<(), String> {
+    Err("device installation policy control is only supported on Windows".to_owned())
+}
+
 #[cfg(all(windows, not(feature = "static-libwdi")))]
 fn wdi_args(uninstall: bool, vid: u16, pid: u16) -> Vec<String> {
     let mut args = vec![

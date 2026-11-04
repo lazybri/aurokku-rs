@@ -18,7 +18,7 @@ the original Python source.
 - Brand-tolerant SN parsing: 11-character serials, 16 hex NV10077 bytes, and 12-character USB serials that append one extra digit to the printed serial (the trailing digit is trimmed)
 - Optional JSON output and verbose USB frame logs
 - egui + eframe cross-platform GUI (Material 3, Chinese/English UI, Wayland / Windows / macOS)
-- Resident WinUSB driver card on Windows: status, install / restore, log path, restore-on-exit, and a test-only `usbser.sys` disable/restore action (with PnP fallback so driverless devices stay visible)
+- Resident WinUSB driver card on Windows: status, install / restore, log path, restore-on-exit, and a test-only Ports-class policy to block `usbser.sys` from taking over a device on its first connection (with PnP fallback so driverless devices stay visible)
 
 ## GUI front-end (egui / Material 3)
 
@@ -80,8 +80,8 @@ Platform notes:
   (it shows up as "USB Serial Device" / COMx) and libusb cannot open it until a
   WinUSB driver is installed — use the resident WinUSB card on the Overview page,
   or see [docs/windows-driver.md](docs/windows-driver.md) for Zadig / wdi-simple /
-  signed-INF instructions. For test machines you can also temporarily disable the
-  `usbser.sys` service with
+  signed-INF instructions. For test machines you can also block `usbser.sys` from
+  taking over a device on its first connection with
   [docs/windows-disable-usbser.md](docs/windows-disable-usbser.md).
 
 ### Linux USB permissions
@@ -372,7 +372,7 @@ version 3 only (`GPL-3.0-only`)**. The complete licence text is
 
 The complete **Corresponding Source** of a release is the source tree at the
 matching Git tag, for example
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.6> (all tags:
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.7> (all tags:
 <https://github.com/lazybri/aurokku-rs/tags>). The tag contains the build
 scripts and GitHub Actions workflow that produce the released binaries.
 

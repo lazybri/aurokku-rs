@@ -59,10 +59,10 @@ pub enum Request {
         vid: u16,
         pid: u16,
     },
-    /// Disable the usbser.sys kernel service (Windows only, testing helper).
-    DisableUsbSer,
-    /// Restore the saved usbser.sys Start value (Windows only).
-    RestoreUsbSer,
+    /// Block new Ports-class driver installs so usbser cannot take over.
+    BlockUsbSerInstall,
+    /// Restore the device installation policy saved by the block action.
+    RestoreUsbSerPolicy,
     Shutdown,
 }
 
@@ -204,17 +204,17 @@ impl Worker {
                             let service = driver::driver_service(vid, pid);
                             let _ = thread_events.send(Event::DriverStatus { vid, pid, service });
                         }
-                        Request::DisableUsbSer => {
-                            let result = driver::disable_usbser(None, false);
+                        Request::BlockUsbSerInstall => {
+                            let result = driver::block_usbser_install(None, false);
                             let _ = thread_events.send(Event::UsbSerService {
-                                operation: "disable",
+                                operation: "block",
                                 result,
                             });
                         }
-                        Request::RestoreUsbSer => {
-                            let result = driver::restore_usbser(None, false);
+                        Request::RestoreUsbSerPolicy => {
+                            let result = driver::restore_usbser_policy(None, false);
                             let _ = thread_events.send(Event::UsbSerService {
-                                operation: "restore",
+                                operation: "restore-policy",
                                 result,
                             });
                         }

@@ -164,31 +164,33 @@ pub fn t(text: &str) -> &str {
         "上次会话未恢复 {target} 的原始 USB 驱动，可在“WinUSB 驱动”卡片中恢复" => {
             "The previous session did not restore the original USB driver for {target}; you can restore it from the WinUSB driver card."
         }
-        "禁用 usbser.sys 内核服务？" => "Disable the usbser.sys kernel service?",
-        "禁用 usbser.sys" => "Disable usbser.sys",
-        "将把 usbser.sys 的 Start 改为 4（DISABLED），并保存原值以便恢复。这会停用本机所有 CDC 串口设备(COM 口)，只建议在测试机使用；执行后需要重启或重新插拔设备。" => {
-            "This sets the usbser.sys Start value to 4 (DISABLED) and saves the previous value for restoring. Every CDC serial device (COM port) on this machine stops working; use it on test machines only. Reboot or reconnect the device afterwards."
+        "阻止 usbser 首次安装（Ports 类策略）？" => {
+            "Block usbser's first installation (Ports class policy)?"
         }
-        "会无限重启的品牌可先临时禁用 usbser.sys（Start=4）再安装 WinUSB；会停用本机所有 CDC 串口设备，仅建议在测试机使用。" => {
-            "Brands that reboot endlessly can temporarily disable usbser.sys (Start=4) before installing WinUSB. This stops every CDC serial device (COM port); use it on test machines only."
+        "阻止 usbser 安装" => "Block usbser installation",
+        "将添加 Windows 设备安装限制：阻止 Ports 类驱动的新安装，从而让首次接入的设备无法被 usbser.inf 接管。会影响本机所有新插入的 COM/串口设备，只建议测试机使用；安装 WinUSB 后请点击“恢复策略”。" => {
+            "This adds a Windows device-installation restriction that blocks new Ports-class driver installs so usbser.inf cannot take over a device on its first connection. It affects every newly inserted COM/serial device on this machine; use it on test machines only. Restore the policy after installing WinUSB."
         }
-        "禁用 usbser.sys（测试）" => "Disable usbser.sys (testing)",
-        "恢复 usbser.sys" => "Restore usbser.sys",
-        "正在禁用 usbser.sys…" => "Disabling usbser.sys…",
-        "正在禁用 usbser.sys（需要管理员确认）…" => {
-            "Disabling usbser.sys (administrator confirmation required)…"
+        "首次接入会无限重启的品牌，可先阻止 Ports 类驱动安装（usbser.inf），再插入设备并安装 WinUSB；期间所有新 COM/串口设备都无法安装，仅建议测试机使用。" => {
+            "For brands that reboot endlessly on first connection, block Ports-class driver installation (usbser.inf) first, then connect the device and install WinUSB. While active, every new COM/serial device cannot install; test machines only."
         }
-        "正在恢复 usbser.sys…" => "Restoring usbser.sys…",
-        "正在恢复 usbser.sys（需要管理员确认）…" => {
-            "Restoring usbser.sys (administrator confirmation required)…"
+        "阻止 usbser 首次安装（Ports 类策略）" => {
+            "Block usbser first install (Ports class policy)"
         }
-        "已禁用 usbser.sys，请重启或重新插拔设备" => {
-            "usbser.sys disabled; reboot or reconnect the device"
+        "恢复策略" => "Restore policy",
+        "正在阻止 usbser 首次安装…" => "Blocking usbser first installation…",
+        "正在阻止 usbser 首次安装（需要管理员确认）…" => {
+            "Blocking usbser first installation (administrator confirmation required)…"
         }
-        "已恢复 usbser.sys，请重启或重新插拔设备" => {
-            "usbser.sys restored; reboot or reconnect the device"
+        "正在恢复设备安装策略…" => "Restoring device-install policy…",
+        "正在恢复设备安装策略（需要管理员确认）…" => {
+            "Restoring device-install policy (administrator confirmation required)…"
         }
-        "usbser.sys 操作失败：{message}" => "usbser.sys operation failed: {message}",
+        "已阻止 usbser 首次安装，请插入设备并安装 WinUSB" => {
+            "usbser first installation blocked; connect the device and install WinUSB"
+        }
+        "已恢复设备安装策略" => "Device-install policy restored",
+        "设备安装策略操作失败：{message}" => "Device-install policy operation failed: {message}",
 
         // ------------------------------------------------------------------
         // Overview
@@ -537,8 +539,11 @@ mod tests {
         assert_eq!(t("读取综合状态"), "Read full status");
         assert_eq!(t("WinUSB 驱动"), "WinUSB driver");
         assert_eq!(t("刷新驱动状态"), "Refresh driver status");
-        assert_eq!(t("禁用 usbser.sys（测试）"), "Disable usbser.sys (testing)");
-        assert_eq!(t("恢复 usbser.sys"), "Restore usbser.sys");
+        assert_eq!(
+            t("阻止 usbser 首次安装（Ports 类策略）"),
+            "Block usbser first install (Ports class policy)"
+        );
+        assert_eq!(t("恢复策略"), "Restore policy");
         assert_eq!(
             tf("当前 Service：{service}", &[("service", "WINUSB")]),
             "Current service: WINUSB"

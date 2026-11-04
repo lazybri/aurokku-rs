@@ -146,25 +146,26 @@ pnputil /add-driver auroku.inf /install
 Windows 10/11 x64 要求驱动包带有效签名(微软 attestation 或自签名证书导入
 受信任根),否则 `pnputil` 会拒绝安装。
 
-### 方式 E:临时禁用 usbser.sys(仅测试/排查)
+### 方式 E:首次接入前阻止 usbser 安装(Ports 类策略,仅测试)
 
-如果只是想在测试机上阻止 Windows 把 CDC 设备绑定到 `usbser.sys`,可以临时
-把该内核服务的 `Start` 设为 `4`(`SERVICE_DISABLED`):
+**只禁用 usbser 服务无效**:设备第一次安装时,Windows 会执行 `usbser.inf` 的
+`AddService`,把服务 `Start` 从 4 改回 3 并启动驱动。要避免首次接入即被
+usbser 接管(包括会因 usbser 无限重启的品牌),必须在设备安装**之前**阻止
+Ports 类驱动安装:
 
-- GUI:概览页 **WinUSB 驱动** 卡片底部的 **禁用 usbser.sys（测试）** /
-  **恢复 usbser.sys** 按钮(确认后弹一次 UAC);
-- `tools/windows/disable-usbser.reg` — 直接导入的注册表条目;
-- `tools/windows/usbser-service.ps1` — 带原值备份/恢复、状态查询和
-  `-WhatIf` 的脚本:
+- GUI:概览页 **WinUSB 驱动** 卡片底部的
+  **阻止 usbser 首次安装（Ports 类策略）** / **恢复策略** 按钮
+  (确认后弹一次 UAC);
+- CLI:
 
-  ```powershell
-  .\tools\windows\usbser-service.ps1 -Action Status
-  .\tools\windows\usbser-service.ps1 -Action Disable   # 管理员权限
-  .\tools\windows\usbser-service.ps1 -Action Restore   # 恢复原始 Start
+  ```bat
+  auroku --op block-usbser-install --vid 0000 --pid 0000
+  auroku --op restore-usbser-policy --vid 0000 --pid 0000
   ```
 
-禁用后需重启或重新插拔设备才生效;它会影响机器上所有 CDC 串口设备,且
-**不会安装 WinUSB 或让 libusb 直接访问设备**。完整说明与恢复步骤见
+策略生效期间,新插入的 Ports 类设备都不会安装驱动(设备停在无驱动状态);
+随后用同一张卡片安装 WinUSB,完成后点击“恢复策略”。策略会备份到
+`%LOCALAPPDATA%\auroku\usbser-policy-state.json`。完整说明、手动命令和风险见
 [windows-disable-usbser.md](windows-disable-usbser.md)。
 
 ## 4. 验证
@@ -220,7 +221,7 @@ Windows 发布包里的 libwdi 是静态库,由仓库 **orphan 分支 `libwdi-st
 
 auRokku 整体以 **GPL-3.0-only** 发布,完整许可证见仓库根目录 `LICENSE`;
 对应源码(Corresponding Source)是名字与发布版本相同的 Git tag,例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.6>。发布包内附
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.7>。发布包内附
 `LICENSE`、`THIRD-PARTY-NOTICES.md`、`LICENSES/LGPL-3.0.txt` 与
 `LICENSES/LGPL-2.1.txt`。
 

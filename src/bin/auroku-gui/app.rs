@@ -99,7 +99,7 @@ enum Confirm {
     ResetPin,
     WriteUim { value: String, control: u8 },
     MaintenanceBit { control: u8 },
-    DisableUsbSer,
+    BlockUsbSerInstall,
 }
 
 fn device_key(device: &DeviceSummary) -> (u16, u16, u8, u8) {
@@ -130,7 +130,7 @@ impl Confirm {
             Confirm::ResetPin => i18n::t("重置手机锁码？"),
             Confirm::WriteUim { .. } => i18n::t("写入 UIM 锁绑定？"),
             Confirm::MaintenanceBit { .. } => i18n::t("设置维护模式位？"),
-            Confirm::DisableUsbSer => i18n::t("禁用 usbser.sys 内核服务？"),
+            Confirm::BlockUsbSerInstall => i18n::t("阻止 usbser 首次安装（Ports 类策略）？"),
         }
     }
 
@@ -151,10 +151,11 @@ impl Confirm {
                 "通过 0xE1 服务 + auth 4000 写入 NV 10481，control = {control}。此操作会切换维护模式位。",
                 &[("control", &control.to_string())],
             ),
-            Confirm::DisableUsbSer => i18n::t(
-                "将把 usbser.sys 的 Start 改为 4（DISABLED），并保存原值以便恢复。\
-                 这会停用本机所有 CDC 串口设备(COM 口)，只建议在测试机使用；\
-                 执行后需要重启或重新插拔设备。",
+            Confirm::BlockUsbSerInstall => i18n::t(
+                "将添加 Windows 设备安装限制：阻止 Ports 类驱动的新安装，\
+                 从而让首次接入的设备无法被 usbser.inf 接管。会影响本机所有\
+                 新插入的 COM/串口设备，只建议测试机使用；安装 WinUSB 后\
+                 请点击“恢复策略”。",
             )
             .to_owned(),
         }
@@ -166,7 +167,7 @@ impl Confirm {
             Confirm::ResetPin => i18n::t("重置 PIN"),
             Confirm::WriteUim { .. } => i18n::t("写入"),
             Confirm::MaintenanceBit { .. } => i18n::t("应用"),
-            Confirm::DisableUsbSer => i18n::t("禁用 usbser.sys"),
+            Confirm::BlockUsbSerInstall => i18n::t("阻止 usbser 安装"),
         }
     }
 }
@@ -564,10 +565,10 @@ impl AurokuApp {
                     self.busy_label.clear();
                     match result {
                         Ok(()) => {
-                            let message = if operation == "disable" {
-                                i18n::t("已禁用 usbser.sys，请重启或重新插拔设备")
+                            let message = if operation == "block" {
+                                i18n::t("已阻止 usbser 首次安装，请插入设备并安装 WinUSB")
                             } else {
-                                i18n::t("已恢复 usbser.sys，请重启或重新插拔设备")
+                                i18n::t("已恢复设备安装策略")
                             };
                             self.log(message.to_owned());
                             self.notify(message, Tone::Success);
@@ -576,12 +577,12 @@ impl AurokuApp {
                         }
                         Err(message) => {
                             self.log(i18n::tf(
-                                "usbser.sys 操作失败：{message}",
+                                "设备安装策略操作失败：{message}",
                                 &[("message", &message)],
                             ));
                             self.notify(
                                 i18n::tf(
-                                    "usbser.sys 操作失败：{message}",
+                                    "设备安装策略操作失败：{message}",
                                     &[("message", &message)],
                                 ),
                                 Tone::Error,
@@ -755,20 +756,20 @@ impl AurokuApp {
         self.worker.send(Request::RestoreDriver { vid, pid });
     }
 
-    /// Disable/restore the usbser.sys kernel service (Windows testing helper).
+    /// Block new Ports-class driver installs / restore the saved policy.
     fn run_usbser_service(&mut self, action: &'static str) {
         if self.busy {
             return;
         }
         self.busy = true;
-        if action == "disable" {
-            self.busy_label = i18n::t("正在禁用 usbser.sys…").to_owned();
-            self.log(i18n::t("正在禁用 usbser.sys（需要管理员确认）…").to_owned());
-            self.worker.send(Request::DisableUsbSer);
+        if action == "block" {
+            self.busy_label = i18n::t("正在阻止 usbser 首次安装…").to_owned();
+            self.log(i18n::t("正在阻止 usbser 首次安装（需要管理员确认）…").to_owned());
+            self.worker.send(Request::BlockUsbSerInstall);
         } else {
-            self.busy_label = i18n::t("正在恢复 usbser.sys…").to_owned();
-            self.log(i18n::t("正在恢复 usbser.sys（需要管理员确认）…").to_owned());
-            self.worker.send(Request::RestoreUsbSer);
+            self.busy_label = i18n::t("正在恢复设备安装策略…").to_owned();
+            self.log(i18n::t("正在恢复设备安装策略（需要管理员确认）…").to_owned());
+            self.worker.send(Request::RestoreUsbSerPolicy);
         }
     }
 
@@ -812,7 +813,7 @@ impl AurokuApp {
             Confirm::MaintenanceBit { control } => {
                 self.start(Task::MaintenanceBit { control }, "设置维护模式位")
             }
-            Confirm::DisableUsbSer => self.run_usbser_service("disable"),
+            Confirm::BlockUsbSerInstall => self.run_usbser_service("block"),
         }
     }
 
@@ -1445,8 +1446,8 @@ impl AurokuApp {
         let mut restore = false;
         let mut refresh = false;
         let mut copy_log = false;
-        let mut disable_usbser = false;
-        let mut restore_usbser = false;
+        let mut block_usbser = false;
+        let mut restore_policy = false;
 
         card(ui, &s, |ui| {
             card_header(
@@ -1551,8 +1552,9 @@ impl AurokuApp {
                 ui,
                 &s,
                 Icon::Warning,
-                "会无限重启的品牌可先临时禁用 usbser.sys（Start=4）再安装 WinUSB；\
-                 会停用本机所有 CDC 串口设备，仅建议在测试机使用。",
+                "首次接入会无限重启的品牌，可先阻止 Ports 类驱动安装（usbser.inf），\
+                 再插入设备并安装 WinUSB；期间所有新 COM/串口设备都无法安装，\
+                 仅建议测试机使用。",
                 Tone::Warning,
             );
             ui.horizontal_wrapped(|ui| {
@@ -1560,27 +1562,27 @@ impl AurokuApp {
                     ui,
                     &s,
                     Some(Icon::Warning),
-                    "禁用 usbser.sys（测试）",
+                    "阻止 usbser 首次安装（Ports 类策略）",
                     ButtonKind::Text,
                     !self.busy,
                     0.0,
                 )
                 .clicked()
                 {
-                    disable_usbser = true;
+                    block_usbser = true;
                 }
                 if button(
                     ui,
                     &s,
                     Some(Icon::Refresh),
-                    "恢复 usbser.sys",
+                    "恢复策略",
                     ButtonKind::Text,
                     !self.busy,
                     0.0,
                 )
                 .clicked()
                 {
-                    restore_usbser = true;
+                    restore_policy = true;
                 }
             });
 
@@ -1634,11 +1636,11 @@ impl AurokuApp {
             ui.ctx().copy_text(log_path);
             self.notify(i18n::t("驱动日志路径已复制到剪贴板"), Tone::Success);
         }
-        if disable_usbser {
-            self.confirm = Some(Confirm::DisableUsbSer);
+        if block_usbser {
+            self.confirm = Some(Confirm::BlockUsbSerInstall);
         }
-        if restore_usbser {
-            self.run_usbser_service("restore");
+        if restore_policy {
+            self.run_usbser_service("restore-policy");
         }
     }
 

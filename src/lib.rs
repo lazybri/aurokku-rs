@@ -2484,6 +2484,12 @@ enum Op {
     /// Restore the saved usbser.sys Start value (Windows only)
     #[value(name = "restore-usbser")]
     RestoreUsbSer,
+    /// Block new Ports-class driver installs so usbser cannot take over (Windows only)
+    #[value(name = "block-usbser-install")]
+    BlockUsbSerInstall,
+    /// Restore the device installation policy saved by block-usbser-install
+    #[value(name = "restore-usbser-policy")]
+    RestoreUsbSerPolicy,
 }
 
 impl Op {
@@ -2505,6 +2511,8 @@ impl Op {
             Op::RestoreDriver => "restore-driver",
             Op::DisableUsbSer => "disable-usbser",
             Op::RestoreUsbSer => "restore-usbser",
+            Op::BlockUsbSerInstall => "block-usbser-install",
+            Op::RestoreUsbSerPolicy => "restore-usbser-policy",
         }
     }
 }
@@ -2876,6 +2884,20 @@ fn print_human_report(op: &str, result: &Value) {
                     .unwrap_or_else(|| "unknown".to_owned())
             );
         }
+        "block-usbser-install" | "restore-usbser-policy" => {
+            println!(
+                "  Device policy : {}",
+                if result
+                    .get("success")
+                    .map(|value| value.as_bool().unwrap_or(false))
+                    .unwrap_or(false)
+                {
+                    "updated"
+                } else {
+                    "failed"
+                }
+            );
+        }
         _ => {}
     }
 
@@ -2963,7 +2985,12 @@ fn task_from_cli(cli: &Cli) -> Task {
         },
         Op::Exituimlk => Task::Exituimlk,
         Op::Exit => Task::Exit,
-        Op::InstallDriver | Op::RestoreDriver | Op::DisableUsbSer | Op::RestoreUsbSer => {
+        Op::InstallDriver
+        | Op::RestoreDriver
+        | Op::DisableUsbSer
+        | Op::RestoreUsbSer
+        | Op::BlockUsbSerInstall
+        | Op::RestoreUsbSerPolicy => {
             unreachable!("driver/service operations are handled before task dispatch")
         }
     }
@@ -2971,50 +2998,64 @@ fn task_from_cli(cli: &Cli) -> Task {
 
 /// Run `--op install-driver` / `--op restore-driver` and return the exit code.
 fn run_driver_op(cli: &Cli) -> i32 {
-    let outcome: Result<Value, String> = match cli.op {
-        Op::InstallDriver => driver::install(
-            cli.vid,
-            cli.pid,
-            cli.restore_on_exit,
-            None,
-            cli.driver_log_append,
-        )
-        .map(|record| {
-            json!({
-                "operation": "install-driver",
-                "success": true,
-                "vid": format!("0x{:04x}", record.vid),
-                "pid": format!("0x{:04x}", record.pid),
-                "restore_on_exit": record.restore_on_exit,
-                "state_file": driver::state_path().display().to_string(),
-            })
-        }),
-        Op::RestoreDriver => {
-            driver::restore(cli.vid, cli.pid, None, cli.driver_log_append).map(|()| {
+    let outcome: Result<Value, String> =
+        match cli.op {
+            Op::InstallDriver => driver::install(
+                cli.vid,
+                cli.pid,
+                cli.restore_on_exit,
+                None,
+                cli.driver_log_append,
+            )
+            .map(|record| {
                 json!({
-                    "operation": "restore-driver",
+                    "operation": "install-driver",
                     "success": true,
-                    "vid": format!("0x{:04x}", cli.vid),
-                    "pid": format!("0x{:04x}", cli.pid),
+                    "vid": format!("0x{:04x}", record.vid),
+                    "pid": format!("0x{:04x}", record.pid),
+                    "restore_on_exit": record.restore_on_exit,
+                    "state_file": driver::state_path().display().to_string(),
                 })
-            })
-        }
-        Op::DisableUsbSer => driver::disable_usbser(None, cli.driver_log_append).map(|()| {
-            json!({
-                "operation": "disable-usbser",
-                "success": true,
-                "start": driver::usbser_start(),
-            })
-        }),
-        Op::RestoreUsbSer => driver::restore_usbser(None, cli.driver_log_append).map(|()| {
-            json!({
-                "operation": "restore-usbser",
-                "success": true,
-                "start": driver::usbser_start(),
-            })
-        }),
-        _ => unreachable!("only driver/service operations reach this helper"),
-    };
+            }),
+            Op::RestoreDriver => driver::restore(cli.vid, cli.pid, None, cli.driver_log_append)
+                .map(|()| {
+                    json!({
+                        "operation": "restore-driver",
+                        "success": true,
+                        "vid": format!("0x{:04x}", cli.vid),
+                        "pid": format!("0x{:04x}", cli.pid),
+                    })
+                }),
+            Op::DisableUsbSer => driver::disable_usbser(None, cli.driver_log_append).map(|()| {
+                json!({
+                    "operation": "disable-usbser",
+                    "success": true,
+                    "start": driver::usbser_start(),
+                })
+            }),
+            Op::RestoreUsbSer => driver::restore_usbser(None, cli.driver_log_append).map(|()| {
+                json!({
+                    "operation": "restore-usbser",
+                    "success": true,
+                    "start": driver::usbser_start(),
+                })
+            }),
+            Op::BlockUsbSerInstall => driver::block_usbser_install(None, cli.driver_log_append)
+                .map(|()| {
+                    json!({
+                        "operation": "block-usbser-install",
+                        "success": true,
+                    })
+                }),
+            Op::RestoreUsbSerPolicy => driver::restore_usbser_policy(None, cli.driver_log_append)
+                .map(|()| {
+                    json!({
+                        "operation": "restore-usbser-policy",
+                        "success": true,
+                    })
+                }),
+            _ => unreachable!("only driver/service operations reach this helper"),
+        };
 
     match outcome {
         Ok(result) => {
@@ -3063,7 +3104,12 @@ pub fn cli_main() {
 
     if matches!(
         cli.op,
-        Op::InstallDriver | Op::RestoreDriver | Op::DisableUsbSer | Op::RestoreUsbSer
+        Op::InstallDriver
+            | Op::RestoreDriver
+            | Op::DisableUsbSer
+            | Op::RestoreUsbSer
+            | Op::BlockUsbSerInstall
+            | Op::RestoreUsbSerPolicy
     ) {
         std::process::exit(run_driver_op(&cli));
     }

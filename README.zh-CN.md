@@ -17,7 +17,7 @@
 - 兼容多品牌 SN 解析：11 位序列号、16 位十六进制 NV10077，以及 USB 描述符在 11 位印刷序列号后多带 1 位数字的 12 位 SN（自动去掉末尾附加位）
 - 可选 JSON 输出、详细 USB 帧日志
 - egui + eframe 跨平台 GUI 前端（Material 3 风格，中英文界面，Wayland / Windows / macOS）
-- Windows 常驻 WinUSB 驱动卡：状态、安装 / 恢复、日志路径、退出自动恢复，以及测试用的 `usbser.sys` 禁用/恢复按钮（配合 PnP 枚举，无驱动设备仍可见）
+- Windows 常驻 WinUSB 驱动卡：状态、安装 / 恢复、日志路径、退出自动恢复，以及测试用的 Ports 类策略（阻止 `usbser.sys` 在首次接入时接管设备；配合 PnP 枚举，无驱动设备仍可见）
 
 ## GUI 前端（egui / Material 3）
 
@@ -71,7 +71,7 @@ PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
   libusb 无法直接打开，需要安装 WinUSB 驱动：可直接使用“概览”页的常驻
   WinUSB 驱动卡，或详见
   [docs/windows-driver.md](docs/windows-driver.md)（Zadig / wdi-simple / 签名 INF）。
-  测试机也可以临时禁用 `usbser.sys` 服务，见
+  测试机也可以先用 Ports 类策略阻止 `usbser.sys` 在首次接入时接管设备，见
   [docs/windows-disable-usbser.md](docs/windows-disable-usbser.md)。
 
 ### Linux USB 权限
@@ -340,7 +340,7 @@ auroku --op status --vid 0482 --pid 0a5c --sn SCAEE0359010
 
 每个发布版本对应的完整**对应源码（Corresponding Source）**就是与版本同名的
 Git tag 下的源码树，例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.6>（全部 tag 见
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.7>（全部 tag 见
 <https://github.com/lazybri/aurokku-rs/tags>）。该 tag 包含生成发布产物所用的
 构建脚本与 GitHub Actions 工作流。
 
