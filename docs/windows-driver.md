@@ -194,6 +194,28 @@ Windows 发布包里的 libwdi 是静态库,由仓库 **orphan 分支 `libwdi-st
 `libwdi.lib`,再设 `LIBWDI_LIB_DIR` 指向同时含 `libwdi.lib` 与 `COPYING-LGPL`
 的目录后,在 Windows 上执行 `cargo build --features static-libwdi`。
 
-**许可证**:libwdi 是 LGPLv3。静态链接的发布包会附带
-`LICENSE-LGPL-3.0.txt`,并且源码与构建脚本随仓库公开,满足“可重新链接”
-要求。若你要分发修改过的 libwdi,请同步替换该库并重新构建。
+## 8. 许可证与合规
+
+auRokku(qt6 分支)整体以 **GPL-3.0-only** 发布,完整许可证见仓库根目录
+`LICENSE`;对应源码(Corresponding Source)是名字与发布版本相同的 Git tag,
+例如 <https://github.com/lazybri/aurokku-rs/tree/v0.3.2-qt6>。发布包内附
+`LICENSE`、`THIRD-PARTY-NOTICES.md`、`LICENSES/LGPL-3.0.txt` 与
+`LICENSES/LGPL-2.1.txt`。
+
+- **libwdi(Windows 发布版,静态链接)**:LGPL-3.0。发布包附带
+  `LICENSE-LGPL-3.0.txt` 与 `LICENSES/LGPL-3.0.txt`;上游源码固定在
+  commit `9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602`,构建流水线在
+  `libwdi-static` 分支公开。若要使用修改过的 libwdi,按第 7 节把新的
+  `libwdi.lib` 放进 `LIBWDI_LIB_DIR` 后重新构建即可完成重新链接。
+- **Qt 6(GUI,动态链接)**:LGPL-3.0。Windows/macOS 包内附带 Qt 运行时
+  (DLL / framework),Linux 依赖系统 Qt 6;替换为兼容的 Qt 6 构建即可重新
+  链接,源码见 <https://code.qt.io>,许可证文本见
+  `LICENSES/LGPL-3.0.txt`。
+- **libusb(rusb vendored,静态链接)**:LGPL-2.1,许可证文本见
+  `LICENSES/LGPL-2.1.txt`,源码 <https://github.com/libusb/libusb>
+  (libusb 1.0.27,由 `libusb1-sys` 0.7.0 提供)。
+- 其余 Rust crates 使用 MIT / Apache-2.0 等宽松许可证,完整依赖清单见
+  `Cargo.lock` 与 `THIRD-PARTY-NOTICES.md`。
+
+所有 LGPL 组件均为未经修改的上游版本;完整源码、构建脚本与许可证文本随发布
+包和公开仓库一并提供。

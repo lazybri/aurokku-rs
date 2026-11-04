@@ -199,11 +199,22 @@ jobs:
           mkdir -p dist/macos-universal
           cp dist/auroku dist/macos-universal/
           cp -R dist/auroku-gui.app dist/macos-universal/
+          # GPLv3 / third-party compliance files travel with the binaries.
+          cp dist/LICENSE dist/THIRD-PARTY-NOTICES.md dist/macos-universal/
+          cp -R dist/LICENSES dist/macos-universal/
           SUFFIX=""
           if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
           VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           ditto -c -k --keepParent dist/macos-universal \
             "dist/auroku-macos-universal-${VERSION}${SUFFIX}.zip"
+          # Fail the build if the compliance files are missing from the zip.
+          ZIP="dist/auroku-macos-universal-${VERSION}${SUFFIX}.zip"
+          for entry in LICENSE THIRD-PARTY-NOTICES.md LICENSES/LGPL-3.0.txt LICENSES/LGPL-2.1.txt; do
+            unzip -l "$ZIP" | grep -q "macos-universal/$entry" || {
+              echo "::error::$ZIP is missing macos-universal/$entry"
+              exit 1
+            }
+          done
 
       - name: Verify & package (Linux musl)
         if: matrix.name == 'linux-x86_64'
@@ -227,7 +238,17 @@ jobs:
           if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
           VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           tar -czf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
-            -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64
+            -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64 \
+            LICENSE THIRD-PARTY-NOTICES.md LICENSES
+          # Fail the build if the compliance files are missing from the archive.
+          tar -tzf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
+            | grep -qx 'LICENSE'
+          tar -tzf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
+            | grep -qx 'THIRD-PARTY-NOTICES.md'
+          tar -tzf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
+            | grep -qx 'LICENSES/LGPL-3.0.txt'
+          tar -tzf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
+            | grep -qx 'LICENSES/LGPL-2.1.txt'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

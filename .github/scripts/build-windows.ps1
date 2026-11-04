@@ -374,6 +374,39 @@ if ($guiDir -and $license) {
     Copy-Item $licenseCopy (Join-Path $guiDir 'LICENSE-LGPL-3.0.txt') -Force
 }
 
+# GPLv3 / third-party compliance files. They are copied into dist/ (and into
+# the self-contained GUI folder, because users may launch the GUI without ever
+# unpacking the zip root) and added to the archive payload. Missing files are
+# hard errors so a release can never be packaged without them.
+$complianceRoot = Get-Location
+$complianceFiles = @('LICENSE', 'THIRD-PARTY-NOTICES.md')
+foreach ($name in $complianceFiles) {
+    $source = Join-Path $complianceRoot $name
+    if (-not (Test-Path $source)) { throw "required compliance file not found: $source" }
+    $dest = Join-Path $distDir $name
+    Copy-Item $source $dest -Force
+    $payload += $dest
+    if ($guiDir) { Copy-Item $source (Join-Path $guiDir $name) -Force }
+    Write-Host "Compliance: $dest"
+}
+
+$licenseSourceDir = Join-Path $complianceRoot 'LICENSES'
+foreach ($name in @('LGPL-3.0.txt', 'LGPL-2.1.txt')) {
+    $source = Join-Path $licenseSourceDir $name
+    if (-not (Test-Path $source)) { throw "required third-party license text not found: $source" }
+}
+$distLicenses = Join-Path $distDir 'LICENSES'
+New-Item -ItemType Directory -Force -Path $distLicenses | Out-Null
+Get-ChildItem $licenseSourceDir -File | ForEach-Object { Copy-Item $_.FullName $distLicenses -Force }
+$payload += $distLicenses
+Write-Host "Compliance: $distLicenses"
+
+if ($guiDir) {
+    $guiLicenses = Join-Path $guiDir 'LICENSES'
+    New-Item -ItemType Directory -Force -Path $guiLicenses | Out-Null
+    Get-ChildItem $licenseSourceDir -File | ForEach-Object { Copy-Item $_.FullName $guiLicenses -Force }
+}
+
 if ($Target -like '*-msvc') {
     $dumpbin = Find-Dumpbin
     if (-not $dumpbin) { throw 'dumpbin.exe not found; cannot verify the static C runtime' }
@@ -393,6 +426,21 @@ if ($Target -like '*-msvc') {
 $version = (Select-String -Path (Join-Path (Get-Location) 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 $zip = Join-Path $distDir "auroku-windows-$arch-v$version$zipSuffix.zip"
 Compress-Archive -Path $payload -DestinationPath $zip -Force
+
+# Assert the archive really contains the compliance files (Compress-Archive
+# preserves the LICENSES directory and its entries use forward slashes).
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+try {
+    $entryNames = @($zipArchive.Entries | ForEach-Object { $_.FullName })
+} finally {
+    $zipArchive.Dispose()
+}
+foreach ($requiredEntry in @('LICENSE', 'THIRD-PARTY-NOTICES.md', 'LICENSES/LGPL-3.0.txt', 'LICENSES/LGPL-2.1.txt')) {
+    if ($entryNames -notcontains $requiredEntry) {
+        throw "archive $zip is missing the required compliance entry: $requiredEntry"
+    }
+}
 
 Write-Host ""
 Write-Host "Output:  $distExe"

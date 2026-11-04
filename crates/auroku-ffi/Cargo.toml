@@ -4,7 +4,7 @@ version = "0.3.2-qt6"
 edition = "2021"
 rust-version = "1.88"
 description = "C ABI bridge for the auroku Rust backend (used by the Qt front-end)"
-license = "MIT"
+license = "GPL-3.0-only"
 
 [lib]
 name = "auroku_ffi"

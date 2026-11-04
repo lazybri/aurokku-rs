@@ -393,3 +393,29 @@ Implementation details:
   (Python semantics) rather than being mapped back to an 11-character serial.
 - Error type names (`ValueError` / `RuntimeError` / `TimeoutError`) and exit
   codes (1 on failure) match the Python version.
+
+## License
+
+auRokku is free software licensed under the **GNU General Public License,
+version 3 only (`GPL-3.0-only`)**. The complete licence text is
+[`LICENSE`](LICENSE). There is **no warranty**, to the extent permitted by law.
+
+The complete **Corresponding Source** of a release is the source tree at the
+matching Git tag, for example
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.2-qt6> (all tags:
+<https://github.com/lazybri/aurokku-rs/tags>). The tag contains the Qt/CMake
+files, Rust build scripts and GitHub Actions workflow that produce the released
+binaries.
+
+Release packages also contain [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+and the third-party licence texts:
+
+- [LICENSES/LGPL-3.0.txt](LICENSES/LGPL-3.0.txt) — Qt 6 (dynamic link) and
+  libwdi (LGPL-3.0, static link in the Windows release)
+- [LICENSES/LGPL-2.1.txt](LICENSES/LGPL-2.1.txt) — libusb (LGPL-2.1, static
+  link on all platforms)
+
+Qt 6 is dynamically linked and can be relinked by replacing the shipped Qt
+DLLs/frameworks (or the system Qt 6 on Linux); libusb and libwdi are statically
+linked and can be relinked by rebuilding from the public source tag with a
+modified library. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) §4.

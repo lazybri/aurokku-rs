@@ -226,3 +226,9 @@ if [[ "$GUI_BUILT" -eq 1 ]]; then
 else
     echo "GUI:        skipped"
 fi
+
+# GPLv3 / third-party compliance files: the CI tar step packages these next to
+# the binaries (see THIRD-PARTY-NOTICES.md).
+cp LICENSE THIRD-PARTY-NOTICES.md dist/
+rm -rf dist/LICENSES
+cp -R LICENSES dist/LICENSES
