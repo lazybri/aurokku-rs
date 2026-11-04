@@ -21,7 +21,7 @@ This correction does not relicense any third-party component listed below.
 The complete Corresponding Source of every release is the source tree at the
 Git tag that matches the release:
 
-- this release: <https://github.com/lazybri/aurokku-rs/tree/v0.3.4>
+- this release: <https://github.com/lazybri/aurokku-rs/tree/v0.3.5>
 - all tags: <https://github.com/lazybri/aurokku-rs/tags>
 
 The source tree contains the complete build scripts and the GitHub Actions
@@ -150,7 +150,7 @@ is”**, without warranty of any kind, express or implied. See the GPLv3 text
 
 - 本项目整体以 **GPL-3.0-only** 发布，完整许可证见根目录 `LICENSE`；
   对应源码（Corresponding Source）见与发布版本同名的 Git tag，
-  例如 <https://github.com/lazybri/aurokku-rs/tree/v0.3.4>。
+  例如 <https://github.com/lazybri/aurokku-rs/tree/v0.3.5>。
 - 第三方组件：libusb 1.0.27（LGPL-2.1，静态链接）、libwdi 1.5.1
   （LGPL-3.0，仅 Windows 发布版静态链接）、Rust crates（主要为
   MIT / Apache-2.0，完整清单见 `Cargo.lock`）、egui 内置回退字体

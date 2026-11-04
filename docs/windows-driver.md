@@ -199,7 +199,7 @@ Windows 发布包里的 libwdi 是静态库,由仓库 **orphan 分支 `libwdi-st
 
 auRokku 整体以 **GPL-3.0-only** 发布,完整许可证见仓库根目录 `LICENSE`;
 对应源码(Corresponding Source)是名字与发布版本相同的 Git tag,例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.4>。发布包内附
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.5>。发布包内附
 `LICENSE`、`THIRD-PARTY-NOTICES.md`、`LICENSES/LGPL-3.0.txt` 与
 `LICENSES/LGPL-2.1.txt`。
 

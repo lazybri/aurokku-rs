@@ -15,7 +15,7 @@ the original Python source.
 - Single-session status / batch queries
 - USB layout enumeration, SERI echo and SCDP active probe (`--op probe`)
 - Type2Auth 52/53 authentication (`--type2`)
-- Brand-tolerant SN parsing: 11-character serials, 16 hex NV10077 bytes, and 12-character "five letters + decimal serial" serials (fallback derives the 24-bit NV10077 field)
+- Brand-tolerant SN parsing: 11-character serials, 16 hex NV10077 bytes, and 12-character USB serials that append one extra digit to the printed serial (the trailing digit is trimmed)
 - Optional JSON output and verbose USB frame logs
 - egui + eframe cross-platform GUI (Material 3, Chinese/English UI, Wayland / Windows / macOS)
 - Resident WinUSB driver card on Windows: status, install / restore, log path and restore-on-exit
@@ -319,8 +319,8 @@ auroku --op status --vid 0482 --pid 0a5c --json
 auroku --op status --vid 0482 --pid 0a5c --verbose
 auroku --op status --vid 0482 --pid 0a5c --sn SKYKA077394
 auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
-# 12-character brand serials are parsed through the fallback path:
-auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
+# 12-character USB serials with one extra trailing digit are auto-trimmed:
+auroku --op status --vid 0482 --pid 0a5c --sn SCAEE0359010
 ```
 
 ## Relationship to the Python version
@@ -351,13 +351,14 @@ Implementation details:
   descriptors, matching pyusb `read`/`write` auto-detection.
 - When `--sn` is 16 hex digits, it is used verbatim as Type2Auth material
   (Python semantics) rather than being mapped back to an 11-character serial.
-- Some brands return a 12-character serial of five ASCII letters followed by a
-  seven-digit decimal sequence (for example `SCADX1771880`). When the tail cannot
-  be decoded as hex / BCD, the parser falls back to decoding that decimal
-  sequence into the 3-byte big-endian NV10077 field (keeping the usual 5 + 3
-  byte layout), then reverses the material exactly like the standard path.
-  11-character serials and 16-hex inputs are unchanged, truncated 11-character
-  serials are still rejected, and the device SN is still reported verbatim.
+- Some brands report the printed 11-character serial with one extra trailing
+  digit in the USB iSerialNumber: a Casio CAY01 label reads `SCAEE035901`, while
+  the descriptor returns `SCAEE0359010`. When the first 11 characters form a
+  valid standard serial and the 12th character is a decimal digit, the parser
+  drops that trailing digit and uses the normal 11-character layout (5 ASCII
+  chars + hex tail, stored reversed). The canonical SN shown by the tool is the
+  printed 11-character serial. 11-character serials and 16-hex inputs are
+  unchanged, and truncated/malformed serials are still rejected.
 - Error type names (`ValueError` / `RuntimeError` / `TimeoutError`) and exit
   codes (1 on failure) match the Python version.
 
@@ -369,7 +370,7 @@ version 3 only (`GPL-3.0-only`)**. The complete licence text is
 
 The complete **Corresponding Source** of a release is the source tree at the
 matching Git tag, for example
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.4> (all tags:
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.5> (all tags:
 <https://github.com/lazybri/aurokku-rs/tags>). The tag contains the build
 scripts and GitHub Actions workflow that produce the released binaries.
 

@@ -1186,7 +1186,7 @@ impl AurokuApp {
                 ui,
                 &s,
                 Icon::Info,
-                "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动使用备用解析。",
+                "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动去掉末尾附加数字后解析。",
                 Tone::Neutral,
             );
         });

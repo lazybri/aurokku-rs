@@ -14,7 +14,7 @@
 - 单会话综合状态 / 批量查询
 - USB 布局枚举、SERI 回声与 SCDP 主动探测（`--op probe`）
 - Type2Auth 52/53 认证（`--type2`）
-- 兼容多品牌 SN 解析：11 位序列号、16 位十六进制 NV10077，以及“5 位字母 + 十进制序号”的 12 位序列号（备用路径推导 24-bit NV10077 字段）
+- 兼容多品牌 SN 解析：11 位序列号、16 位十六进制 NV10077，以及 USB 描述符在 11 位印刷序列号后多带 1 位数字的 12 位 SN（自动去掉末尾附加位）
 - 可选 JSON 输出、详细 USB 帧日志
 - egui + eframe 跨平台 GUI 前端（Material 3 风格，中英文界面，Wayland / Windows / macOS）
 - Windows 常驻 WinUSB 驱动卡：状态、安装 / 恢复、日志路径与退出自动恢复
@@ -289,8 +289,8 @@ auroku --op status --vid 0482 --pid 0a5c --json
 auroku --op status --vid 0482 --pid 0a5c --verbose
 auroku --op status --vid 0482 --pid 0a5c --sn SKYKA077394
 auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
-# 部分品牌的 12 位 SN 会走备用解析路径：
-auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
+# 部分品牌 12 位 USB SN 末尾会多 1 位数字，自动去掉：
+auroku --op status --vid 0482 --pid 0a5c --sn SCAEE0359010
 ```
 
 ## 与 Python 版本的对应关系
@@ -321,11 +321,12 @@ auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
   `read` / `write` 的自动判定行为一致。
 - `--sn` 为 16 位十六进制时按 Python 语义原样作为 Type2Auth 材料，不再
   反推 11 位序列号。
-- 部分品牌会返回 12 位 SN：前 5 位 ASCII 字母 + 7 位十进制序号（例如
-  `SCADX1771880`）。当尾部无法按 hex / BCD 直接解码时，解析器启用备用路径，
-  把该十进制序号换算为 3 字节大端 NV10077 字段（仍保持 5 + 3 字节布局），
-  再按与原路径相同的规则整体 reverse。11 位 SN 与 16 位 hex 的行为不变，
-  截断的 11 位 SN 仍会被拒绝，设备 SN 仍按原样显示。
+- 部分品牌会在 USB iSerialNumber 中给 11 位印刷序列号多带 1 位末尾数字：
+  例如 Casio CAY01 标签上印的是 `SCAEE035901`，描述符返回的是
+  `SCAEE0359010`。当 SN 共 12 位、第 12 位是十进制数字且前 11 位能按标准
+  11 位格式解析出 8 字节时，解析器会去掉该末尾附加位，按正常 11 位规则
+  （前 5 位 ASCII + hex 尾，整体 reverse）处理；界面显示的 SN 为 11 位印刷
+  序列号。11 位 SN 与 16 位 hex 的行为不变，截断/畸形 SN 仍会被拒绝。
 - 错误类型名（`ValueError` / `RuntimeError` / `TimeoutError`）与退出码
   （失败为 1）均与 Python 版保持一致。
 
@@ -337,7 +338,7 @@ auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
 
 每个发布版本对应的完整**对应源码（Corresponding Source）**就是与版本同名的
 Git tag 下的源码树，例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.4>（全部 tag 见
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.5>（全部 tag 见
 <https://github.com/lazybri/aurokku-rs/tags>）。该 tag 包含生成发布产物所用的
 构建脚本与 GitHub Actions 工作流。
 

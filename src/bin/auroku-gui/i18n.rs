@@ -188,8 +188,8 @@ pub fn t(text: &str) -> &str {
         "自动" => "Auto",
         "Type2Auth 52/53 认证" => "Type2Auth 52/53 authentication",
         "详细 USB 日志" => "Verbose USB log",
-        "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动使用备用解析。" => {
-            "When SN is empty the device iSerialNumber is used. If the device has no serial, enter an 11-character SN or 16 hex digits manually; a 12-character SN automatically uses the fallback parser."
+        "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动去掉末尾附加数字后解析。" => {
+            "When SN is empty the device iSerialNumber is used. If the device has no serial, enter an 11-character SN or 16 hex digits manually; a 12-character SN automatically drops the extra trailing digit before parsing."
         }
         "快捷操作" => "Quick actions",
         "所有 USB 操作都在后台线程执行，界面不会卡住" => {

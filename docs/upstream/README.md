@@ -32,12 +32,14 @@ instead of relying on memory. The Rust canonical implementation is located in
 - Upstream `parse_sn_to_type2auth` has **no** fallback parser: a 16-hex SN is
   used verbatim, otherwise `forward = upper(s[:5]).encode() + bytes.fromhex(s[5:])`
   is stored reversed. The Rust port keeps exactly that canonical behaviour.
-- The 12-character `5 ASCII letters + 7-digit decimal serial` fallback added on
-  the `main` branch is an **additive extension** for brand variants whose USB
-  iSerialNumber is not hexadecimal (for example `SCADX1771880`,
-  `SCAEE0359010`). It only runs when the upstream canonical parse cannot
-  produce exactly eight bytes; the canonical 11-character, 16-hex and empty-SN
-  behaviour is untouched. See `src/lib.rs` and the fallback tests for vectors.
+- The **trailing-digit** fallback added on the `main` branch is an additive
+  extension for brand variants whose USB iSerialNumber appends one extra digit
+  to the printed 11-character serial (for example a Casio CAY01 label reads
+  `SCAEE035901` while the descriptor returns `SCAEE0359010`). It only runs when
+  the upstream canonical parse cannot produce exactly eight bytes; it drops the
+  trailing decimal digit and parses the remaining standard serial. The canonical
+  11-character, 16-hex and empty-SN behaviour is untouched. See `src/lib.rs`
+  and the fallback tests for vectors.
 
 ## Updating this copy
 
