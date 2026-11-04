@@ -342,7 +342,7 @@ impl LogBridge {
 // Exported C ABI
 // ==============================================================================
 
-/// Version string of the FFI bridge, e.g. `auroku-ffi 0.2.0-qt6 (abi 1)`.
+/// Version string of the FFI bridge, e.g. `auroku-ffi 0.3.2-qt6 (abi 2)`.
 ///
 /// The caller owns the returned string and must free it with
 /// [`auroku_string_free`].

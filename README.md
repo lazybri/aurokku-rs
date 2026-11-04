@@ -54,7 +54,7 @@ cmake --build build/gui
 ```
 
 On Windows pass `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64` (or `msvc2022_64`);
-`build-windows.ps1` discovers Qt automatically and packages the Qt runtime next
+`.github/scripts/build-windows.ps1` discovers Qt automatically and packages the Qt runtime next
 to the executable.
 
 Developer flags: `--smoke-test` (start, then quit), `--screenshot=FILE` and
@@ -74,7 +74,7 @@ Platform notes:
   and cannot be fully static.
 - **Windows**: Qt DLLs and plugins are deployed next to `auroku-gui.exe` by
   `windeployqt`; no separate Qt installation is required.
-- **macOS**: `build-macos.sh` produces `dist/auroku-gui.app` (native
+- **macOS**: `.github/scripts/build-macos.sh` produces `dist/auroku-gui.app` (native
   architecture) and runs `macdeployqt` when available.
 - **Fonts**: a CJK-capable family is selected at start-up (Microsoft YaHei /
   Noto Sans CJK / PingFang, …). Override it with
@@ -137,20 +137,21 @@ a C compiler is also required (`gcc`/`clang` on Linux/macOS, MSVC Build Tools or
 MinGW-w64 on Windows). The Qt GUI additionally needs Qt 6.5+, CMake 3.21+ and
 Ninja.
 
-Each platform has a local build script; artifacts go to `dist/`. The Linux,
-Windows and macOS native scripts build **both the CLI and the GUI**. “Static”
-here refers to Rust/C runtime dependencies; whether system libraries and the
-graphics stack can be linked statically is determined by the OS:
+Each platform has a build script under `.github/scripts/`; artifacts go to
+`dist/`. The Linux, Windows and macOS native scripts build **both the CLI and
+the GUI**. “Static” here refers to Rust/C runtime dependencies; whether system
+libraries and the graphics stack can be linked statically is determined by the
+OS:
 
 | Platform | Command | Artifacts |
 | --- | --- | --- |
-| Linux (static CLI + Qt 6 GUI) | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64` (static ELF), `dist/auroku-gui-linux-x86_64` (Qt 6) |
-| Windows (static CRT) | `.\build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui-windows-<arch>\auroku-gui.exe` (+ Qt runtime), `dist\auroku-windows-<arch>.zip` |
-| macOS (universal CLI + native GUI) | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku` (arm64 + x86_64), `dist/auroku-gui.app` |
-| macOS (native arch) | `./build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui.app` |
+| Linux (static CLI + Qt 6 GUI) | `chmod +x .github/scripts/build-linux.sh && ./.github/scripts/build-linux.sh` | `dist/auroku-linux-x86_64` (static ELF), `dist/auroku-gui-linux-x86_64` (Qt 6) |
+| Windows (static CRT + static libwdi) | `.\.github\scripts\build-windows.ps1` | `dist\auroku.exe`, `dist\auroku-gui-windows-<arch>\auroku-gui.exe` (+ Qt runtime + `auroku.exe`), `dist\auroku-windows-<arch>-v<version>.zip` |
+| macOS (universal CLI + native GUI) | `chmod +x .github/scripts/build-macos.sh && ./.github/scripts/build-macos.sh` | `dist/auroku` (arm64 + x86_64), `dist/auroku-gui.app` |
+| macOS (native arch) | `./.github/scripts/build-macos.sh --native` | `dist/auroku`, `dist/auroku-gui.app` |
 
 Set `AUROKU_BUILD_DEBUG=1` (or pass `--debug` to the shell scripts / `-Debug`
-to `build-windows.ps1`) to reproduce an unoptimised debug build with debug
+to `.github/scripts/build-windows.ps1`) to reproduce an unoptimised debug build with debug
 symbols. The Qt GUI follows that choice (`CMAKE_BUILD_TYPE` is derived from the
 cargo profile), so a debug build never mixes a debug CLI with a release GUI.
 
@@ -181,7 +182,7 @@ readelf -l dist/auroku-linux-x86_64 | grep INTERP   # no output
 ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
-`build-linux.sh` performs these checks after the build and exits on failure.
+`.github/scripts/build-linux.sh` performs these checks after the build and exits on failure.
 The Rust backend is linked into the GUI as well, so the GUI must not reference
 the old bridge library:
 
@@ -197,7 +198,7 @@ objdump -p dist\auroku.exe | Select-String 'DLL Name'
 # api-ms-win-core-synch-*.dll — all shipped by Windows.
 ```
 
-`build-windows.ps1` performs this check automatically and fails if a MinGW, Qt
+`.github/scripts/build-windows.ps1` performs this check automatically and fails if a MinGW, Qt
 or FFI DLL leaks into the CLI. The Qt GUI is intentionally **not** static: it
 loads Qt 6 at runtime, while the Rust backend, libusb and their dependencies are
 linked directly into `auroku-gui.exe`.
@@ -228,7 +229,7 @@ C_INCLUDE_PATH=/usr/include:/usr/include/x86_64-linux-gnu \
 ```
 
 Output: `target/x86_64-unknown-linux-musl/release/auroku` (static ELF). Using
-`build-linux.sh` is recommended: it prepares the UAPI headers and verifies static
+`.github/scripts/build-linux.sh` is recommended: it prepares the UAPI headers and verifies static
 linkage automatically.
 
 ### Cross-compiling Linux (x86_64 static musl)
@@ -245,7 +246,7 @@ Output: `target\x86_64-unknown-linux-musl\release\auroku` (x86_64 static ELF, no
 runtime dependencies; USB access requires root or a matching udev rule).
 
 This cross script only ships the static CLI: the Qt GUI needs a full Linux Qt 6
-sysroot and a C++ toolchain. Build the GUI on Linux with `./build-linux.sh` (or
+sysroot and a C++ toolchain. Build the GUI on Linux with `./.github/scripts/build-linux.sh` (or
 download the Linux archive from the release artifacts).
 
 ### Building the macOS universal binary (arm64 + x86_64)
@@ -253,8 +254,8 @@ download the Linux archive from the release artifacts).
 Run on macOS (with Xcode Command Line Tools installed):
 
 ```bash
-chmod +x build-macos.sh
-./build-macos.sh
+chmod +x .github/scripts/build-macos.sh
+./.github/scripts/build-macos.sh
 ```
 
 The script builds the CLI for `aarch64-apple-darwin` and `x86_64-apple-darwin`,
@@ -263,7 +264,7 @@ the Qt 6 GUI bundle for the current machine architecture.
 
 Output: `dist/auroku` (universal CLI) and `dist/auroku-gui.app` (native Qt GUI).
 
-To build only the current machine architecture, use `./build-macos.sh --native`
+To build only the current machine architecture, use `./.github/scripts/build-macos.sh --native`
 (faster).
 
 > macOS does not support fully static executables: libSystem and system
@@ -273,34 +274,40 @@ To build only the current machine architecture, use `./build-macos.sh --native`
 
 ## GitHub Actions
 
-The workflow in `.github/workflows/build.yml` runs **tests → three-platform build
-→ release** in one go:
+`.github/workflows/build.yml` has two build modes:
 
-- **Pull request**: `cargo fmt --check`, `cargo clippy -D warnings` and
+- **Push to any branch** → **debug build**: unoptimised binaries with debug
+  symbols for Windows (MSVC + static libwdi + Qt GUI), Linux (static musl CLI +
+  Qt GUI) and the macOS universal CLI + native Qt GUI. They are uploaded as
+  workflow artifacts named `*-debug` and are **never** published to the
+  Releases page.
+- **Manual dispatch, mode = `release`** → release build: same three platforms,
+  optimised, and the workflow creates/publishes a GitHub Release. Enter the
+  version (e.g. `v0.3.2-qt6`; a missing `v` is added automatically) and
+  optionally mark it prerelease/draft.
+- **Manual dispatch, mode = `debug`** → same debug build as a commit push.
+- **Pull request** → only `cargo fmt --check`, `cargo clippy -D warnings` and
   `cargo test`.
-- **Manual dispatch**: enter a version (e.g. `v0.2.0-qt6`; a missing `v` is added
-  automatically), optionally prerelease / draft. The workflow runs tests, builds
-  Windows, Linux (static musl) and the macOS universal binary in parallel, then
-  creates a GitHub Release and uploads all artifacts.
-- **Pushing a `v*` tag**: the same test, build and release flow.
 
 The build scripts also honour `AUROKU_BUILD_DEBUG=1` (or `--debug` /
 `-Debug`), so the same three-platform build can be reproduced locally in debug
 mode; the resulting binaries are unoptimised and carry debug symbols.
 
-The Windows release job consumes a **static libwdi** built once by the reusable
-pipeline on the orphan `libwdi-static` branch (pinned by the immutable
-`libwdi-1.5.1-x64-r1` tag) and links it into both binaries, so the shipped
-tools can install the WinUSB driver without an external `wdi-simple.exe`. The
-build recipe and LGPL compliance notes live in
-[docs/windows-driver.md](docs/windows-driver.md).
+The Windows job does not build libwdi itself: a reusable, tag-pinned workflow on
+the orphan `libwdi-static` branch builds the **static libwdi** once per run and
+hands the `libwdi-static` artifact to the Windows job (pinned by the immutable
+`libwdi-1.5.1-x64-r1` tag). The build script detects `LIBWDI_LIB_DIR`, links
+libwdi into both binaries (one UAC prompt, no external `wdi-simple.exe`) and
+bundles `LICENSE-LGPL-3.0.txt`. The build recipe and LGPL compliance notes live
+in [docs/windows-driver.md](docs/windows-driver.md).
 
-Artifacts (each package contains the CLI and the Qt 6 GUI):
+Artifacts (each package contains the CLI and the Qt 6 GUI; debug builds append
+`-debug` to the file name):
 
-- `auroku-windows-x86_64.zip` (static-CRT CLI + GUI folder with the Qt runtime;
-  plus `LICENSE-LGPL-3.0.txt` when libwdi is linked)
-- `auroku-linux-x86_64.tar.gz` (static musl CLI + Qt 6 GUI)
-- `auroku-macos-universal.zip` (universal CLI + `auroku-gui.app`)
+- `auroku-windows-x86_64-v<version>.zip` (static-CRT CLI + GUI folder with the
+  Qt runtime and `auroku.exe`; plus `LICENSE-LGPL-3.0.txt` when libwdi is linked)
+- `auroku-linux-x86_64-v<version>.tar.gz` (static musl CLI + Qt 6 GUI)
+- `auroku-macos-universal-v<version>.zip` (universal CLI + `auroku-gui.app`)
 
 The Linux GUI is built on `ubuntu-22.04` against the Qt 6.8 SDK installed by the
 workflow; install the Qt 6 runtime on the target system (or bundle the libraries

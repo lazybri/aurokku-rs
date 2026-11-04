@@ -55,21 +55,36 @@ package (`getfacl` and `setfacl`).
 
 ### FFI contract
 
-`crates/auroku-ffi` exports:
+`crates/auroku-ffi` exports (C ABI **version 2**):
 
 ```c
+/* Plain version string, e.g. "auroku-ffi 0.3.2-qt6 (abi 2)". */
 char *auroku_ffi_version(void);
 char *auroku_scan_devices(int vid, int pid);   /* < 0 = no filter */
 char *auroku_run_task(const char *request_json, AurokuLogCallback cb, void *user);
+
+/* WinUSB driver provisioning (Windows; other platforms report DriverError). */
+char *auroku_driver_status(void);              /* { supported, pending, service, log_path, state_dir } */
+char *auroku_driver_install(uint16_t vid, uint16_t pid, bool restore_on_exit,
+                            AurokuLogCallback cb, void *user);
+char *auroku_driver_restore(uint16_t vid, uint16_t pid, AurokuLogCallback cb, void *user);
+char *auroku_state_dir(void);                  /* per-user state dir for driver.log / gui.log */
+
 void  auroku_string_free(char *text);
 ```
 
-Every `char *` is a JSON envelope:
+Every `char *` except `auroku_ffi_version` is a JSON envelope:
 
 ```json
 { "ok": true,  "data": ... }
 { "ok": false, "kind": "ValueError", "message": "..." }
 ```
+
+Driver failures use `kind = "DriverError"`; the GUI treats them as recoverable
+and shows the WinUSB driver card on the Overview page. `auroku_driver_install`
+and `auroku_driver_restore` stream progress through the log callback, and the
+GUI mirrors Qt logging plus its own diagnostics to `<state_dir>/gui.log`
+(truncated at start-up).
 
 `auroku_run_task` accepts:
 

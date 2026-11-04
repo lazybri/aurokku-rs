@@ -6,14 +6,14 @@ Prerequisites:
   - Zig (provides Linux headers, musl libc and the lld linker)
 
 Usage:
-  .\windows-cross-build-linux.ps1                        # auto-detect zig under %USERPROFILE%\tools
-  .\windows-cross-build-linux.ps1 -ZigPath C:\zig\zig.exe
+  .\.github\scripts\windows-cross-build-linux.ps1                        # auto-detect zig under %USERPROFILE%\tools
+  .\.github\scripts\windows-cross-build-linux.ps1 -ZigPath C:\zig\zig.exe
 
 Output: target\x86_64-unknown-linux-musl\release\auroku (static ELF, no runtime deps)
 
 The GUI is intentionally not cross-built here: the Qt 6 front-end needs a
 complete Linux Qt sysroot and a C++ cross toolchain. Build it on a Linux box
-with ./build-linux.sh, or download it from the GitHub Actions release artifacts.
+with ./.github/scripts/build-linux.sh, or download it from the GitHub Actions release artifacts.
 #>
 param(
     [string]$ZigPath = ""

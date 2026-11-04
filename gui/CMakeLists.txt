@@ -151,7 +151,7 @@ target_link_libraries(auroku-qt PRIVATE Qt6::Widgets auroku_ffi Threads::Threads
 if(WIN32)
     # System import libraries referenced by the Rust standard library, libusb
     # and the statically linked libwdi (the list mirrors
-    # auroku-driver-sys/build.rs; the staticlib .drectve usually provides them,
+    # the pinned libwdi-sys crate; the staticlib .drectve usually provides them,
     # but listing them keeps MSVC/MinGW link order stable).
     target_link_libraries(auroku-qt PRIVATE ws2_32 userenv bcrypt ntdll advapi32
         ole32 setupapi cfgmgr32 dbghelp user32 hid

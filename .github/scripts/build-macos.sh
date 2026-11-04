@@ -12,11 +12,11 @@
 # redistributable, so this script intentionally refuses other hosts.
 #
 # Usage:
-#   chmod +x build-macos.sh
-#   ./build-macos.sh             # universal binary (arm64 + x86_64)
-#   ./build-macos.sh --native    # current machine architecture only (faster)
-#   ./build-macos.sh --debug     # unoptimised build with debug symbols
-#   ./build-macos.sh --help
+#   chmod +x .github/scripts/build-macos.sh
+#   ./.github/scripts/build-macos.sh             # universal binary (arm64 + x86_64)
+#   ./.github/scripts/build-macos.sh --native    # current machine architecture only (faster)
+#   ./.github/scripts/build-macos.sh --debug     # unoptimised build with debug symbols
+#   ./.github/scripts/build-macos.sh --help
 #
 # Output:
 #   dist/auroku           (CLI, Mach-O, ad-hoc signed when codesign is available)
@@ -24,11 +24,11 @@
 #
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 
 usage() {
     cat <<'EOF'
-Usage: ./build-macos.sh [--native | --universal] [--debug]
+Usage: ./.github/scripts/build-macos.sh [--native | --universal] [--debug]
 
   --universal   Build arm64 + x86_64 and combine with lipo (default)
   --native      Build only the current machine architecture

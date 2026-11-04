@@ -1,15 +1,25 @@
 name: Release
 
 on:
+  # Every commit builds debug binaries for all three platforms and only uploads
+  # them as workflow artifacts (never to the Releases page).
   push:
-    branches: [qt6]
-    tags: ["v*"]
+    branches: ["**"]
+    tags-ignore: ["**"]
   pull_request:
+  # Releases are published manually only, through this dispatch.
   workflow_dispatch:
     inputs:
+      mode:
+        description: "构建类型：release 发布会传到 Releases；debug 只上传 Actions 构件"
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
       version:
-        description: "发布版本号（如 v0.2.0-qt6；省略 v 会自动补全）"
-        required: true
+        description: "发布版本号（仅 release，如 v0.3.2-qt6；省略 v 会自动补全）"
+        required: false
         type: string
       prerelease:
         description: "标记为预发布"
@@ -31,6 +41,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Qt runtime installed by jurplel/install-qt-action; keep in sync with the
+  # static Qt build the GUI links against.
+  QT_VERSION: '6.8.3'
 
 jobs:
   test:
@@ -55,13 +68,34 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace --all-targets
 
+  # Build the static libwdi once per run through the reusable, tag-pinned
+  # pipeline on the orphan libwdi-static branch, then hand the artifact to the
+  # Windows build job. The tag is immutable: upgrading libwdi means publishing a
+  # new tag in that branch (libwdi-<upstream>-x64-r<N>) and changing it here.
+  libwdi:
+    name: Build static libwdi
+    if: github.event_name != 'pull_request'
+    # The reusable workflow is statically validated against the permissions
+    # granted here. Its tag-only "release" job declares contents: write, so the
+    # call job must grant it even though that job never runs for branch pushes
+    # (it is gated on refs/tags/libwdi-*). Narrow as much as the validator allows.
+    permissions:
+      contents: write
+    uses: lazybri/aurokku-rs/.github/workflows/libwdi-static.yml@libwdi-1.5.1-x64-r1
+    with:
+      libwdi-sha: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
+      libwdi-ref: libwdi-1.5.1-x64-r1
+
   # 一次运行内并行构建所有平台；发布 job 汇总产物后直接创建 Release。
   build:
     name: Build ${{ matrix.name }}
     if: github.event_name != 'pull_request'
-    needs: test
+    needs: [test, libwdi]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
+    env:
+      # Commit pushes (and manual dispatch with mode=debug) build the dev profile.
+      AUROKU_BUILD_DEBUG: ${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -70,18 +104,18 @@ jobs:
             os: windows-latest
             rust_targets: x86_64-pc-windows-msvc
             qt_arch: win64_msvc2022_64
-            asset: dist/auroku-windows-x86_64.zip
+            glob: dist/*.zip
           - name: linux-x86_64
             # 22.04 keeps the dynamically linked GUI compatible with glibc 2.35+.
             os: ubuntu-22.04
             rust_targets: x86_64-unknown-linux-musl
             qt_arch: linux_gcc_64
-            asset: auroku-linux-x86_64.tar.gz
+            glob: dist/*.tar.gz
           - name: macos-universal
             os: macos-14
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             qt_arch: clang_64
-            asset: auroku-macos-universal.zip
+            glob: dist/*.zip
     steps:
       - uses: actions/checkout@v4
 
@@ -103,7 +137,7 @@ jobs:
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.3'
+          version: ${{ env.QT_VERSION }}
           arch: ${{ matrix.qt_arch }}
           cache: true
 
@@ -113,10 +147,32 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build & package (Windows, static CRT + Qt GUI)
+      # The static libwdi is produced once per run by the reusable, tag-pinned
+      # pipeline on the orphan libwdi-static branch (see its README.md for the
+      # artifact contract). Nothing in this repository builds libwdi anymore:
+      # no WDK download, no upstream clone, no msbuild targets.
+      - name: Download the pinned static libwdi artifact
+        if: matrix.name == 'windows-x86_64'
+        uses: actions/download-artifact@v4
+        with:
+          name: libwdi-static
+          path: libwdi-out
+
+      - name: Expose LIBWDI_LIB_DIR
         if: matrix.name == 'windows-x86_64'
         shell: pwsh
-        run: ./build-windows.ps1 -Target ${{ matrix.rust_targets }}
+        run: |
+          $libDir = Join-Path $PWD 'libwdi-out/lib'
+          if (-not (Test-Path (Join-Path $libDir 'libwdi.lib'))) {
+            throw 'libwdi-out/lib/libwdi.lib is missing: the libwdi job did not provide the artifact'
+          }
+          "LIBWDI_LIB_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "==> LIBWDI_LIB_DIR=$libDir"
+
+      - name: Build & package (Windows, static CRT + static libwdi + Qt GUI)
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: ./.github/scripts/build-windows.ps1 -Target ${{ matrix.rust_targets }}
 
       - name: GUI smoke test (Windows, offscreen)
         if: matrix.name == 'windows-x86_64'
@@ -132,31 +188,34 @@ jobs:
       - name: Build (Linux musl, fully static CLI + Qt GUI)
         if: matrix.name == 'linux-x86_64'
         run: |
-          chmod +x build-linux.sh
-          ./build-linux.sh
+          chmod +x .github/scripts/build-linux.sh
+          ./.github/scripts/build-linux.sh
 
       - name: Build & package (macOS universal CLI + native Qt GUI)
         if: matrix.name == 'macos-universal'
         run: |
-          bash build-macos.sh
+          bash .github/scripts/build-macos.sh
           QT_QPA_PLATFORM=offscreen ./dist/auroku-gui.app/Contents/MacOS/auroku-gui --smoke-test
           mkdir -p dist/macos-universal
           cp dist/auroku dist/macos-universal/
           cp -R dist/auroku-gui.app dist/macos-universal/
-          ditto -c -k --keepParent dist/macos-universal auroku-macos-universal.zip
+          SUFFIX=""
+          if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
+          VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          ditto -c -k --keepParent dist/macos-universal \
+            "dist/auroku-macos-universal-${VERSION}${SUFFIX}.zip"
 
       - name: Verify & package (Linux musl)
         if: matrix.name == 'linux-x86_64'
         run: |
-          file target/x86_64-unknown-linux-musl/release/auroku
-          file target/x86_64-unknown-linux-musl/release/auroku \
-            | grep -Eq 'statically linked|static-pie linked'
+          file dist/auroku-linux-x86_64
+          file dist/auroku-linux-x86_64 | grep -Eq 'statically linked|static-pie linked'
           # 必须没有动态解释器，否则 target 上缺少 loader 时无法运行。
-          ! readelf -l target/x86_64-unknown-linux-musl/release/auroku | grep -q 'INTERP'
+          ! readelf -l dist/auroku-linux-x86_64 | grep -q 'INTERP'
           # 必须没有 DT_NEEDED 动态依赖。
-          ! readelf -d target/x86_64-unknown-linux-musl/release/auroku | grep -q 'NEEDED'
+          ! readelf -d dist/auroku-linux-x86_64 | grep -q 'NEEDED'
           # 双重确认没有动态依赖
-          ! ldd target/x86_64-unknown-linux-musl/release/auroku 2>&1 | grep -q '=>'
+          ! ldd dist/auroku-linux-x86_64 2>&1 | grep -q '=>'
           file dist/auroku-gui-linux-x86_64
           # Rust 后端必须已静态链接进 GUI，不能再依赖 libauroku_ffi.so。
           ! readelf -d dist/auroku-gui-linux-x86_64 | grep -q 'libauroku_ffi'
@@ -164,19 +223,22 @@ jobs:
             QT_PLUGIN_PATH="$QT_ROOT_DIR/plugins" \
             LD_LIBRARY_PATH="$QT_ROOT_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             ./dist/auroku-gui-linux-x86_64 --smoke-test
-          tar -czf auroku-linux-x86_64.tar.gz \
+          SUFFIX=""
+          if [ "$AUROKU_BUILD_DEBUG" = "1" ]; then SUFFIX="-debug"; fi
+          VERSION="v$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          tar -czf "dist/auroku-linux-x86_64-${VERSION}${SUFFIX}.tar.gz" \
             -C dist auroku-linux-x86_64 auroku-gui-linux-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.asset }}
+          name: ${{ matrix.name }}${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '-debug' || '' }}
+          path: ${{ matrix.glob }}
           if-no-files-found: error
 
   release:
     name: Publish GitHub release
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -193,18 +255,18 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="$INPUT_VERSION"
-            case "$tag" in
-              v*) ;;
-              *) tag="v$tag" ;;
-            esac
-          else
-            tag="${GITHUB_REF_NAME}"
+          tag="$INPUT_VERSION"
+          if [ -z "$tag" ]; then
+            echo "::error::release 模式必须填写 version（例如 v0.3.2-qt6）"
+            exit 1
           fi
+          case "$tag" in
+            v*) ;;
+            *) tag="v$tag" ;;
+          esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
@@ -212,4 +274,3 @@ jobs:
           generate_release_notes: true
           draft: ${{ inputs.draft || false }}
           prerelease: ${{ inputs.prerelease || false }}
-

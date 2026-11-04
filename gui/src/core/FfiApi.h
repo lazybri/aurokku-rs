@@ -2,7 +2,8 @@
 
 // C ABI exported by `crates/auroku-ffi` (linked statically into the GUI as
 // libauroku_ffi.a or auroku_ffi.lib). Every function returning `char*` returns
-// a JSON envelope and the caller must release it with `auroku_string_free`.
+// a JSON envelope, except `auroku_ffi_version` (a plain version string). The
+// caller must release every returned string with `auroku_string_free`.
 #include <cstdint>
 
 extern "C" {

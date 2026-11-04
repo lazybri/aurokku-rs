@@ -6,9 +6,9 @@
 # linked application; the static musl target only applies to the CLI.
 #
 # Usage:
-#   ./build-linux.sh
-#   ./build-linux.sh --debug     (unoptimised build with debug symbols)
-#   ./build-linux.sh --help
+#   ./.github/scripts/build-linux.sh
+#   ./.github/scripts/build-linux.sh --debug   (unoptimised build with debug symbols)
+#   ./.github/scripts/build-linux.sh --help
 #
 # Output:
 #   dist/auroku-linux-x86_64       (fully static CLI)
@@ -16,11 +16,11 @@
 #
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 
 usage() {
     cat <<'EOF'
-Usage: ./build-linux.sh [--debug]
+Usage: ./.github/scripts/build-linux.sh [--debug]
 
 Builds a fully static x86_64 Linux CLI against musl and, when Qt 6 is
 available, the C++ Qt Widgets GUI against the host glibc.

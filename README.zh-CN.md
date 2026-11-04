@@ -47,7 +47,7 @@ cmake --build build/gui
 ```
 
 Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`）
-指定 Qt；`build-windows.ps1` 会自动查找 Qt 并把运行时打包到可执行文件旁。
+指定 Qt；`.github/scripts/build-windows.ps1` 会自动查找 Qt 并把运行时打包到可执行文件旁。
 
 开发参数：`--smoke-test`（启动后退出）、`--screenshot=FILE`、`--page=N`（0–6）
 可用于 `QT_QPA_PLATFORM=offscreen` 的无界面检查。
@@ -63,7 +63,7 @@ Windows 下通过 `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/mingw_64`（或 `msvc2022_64`
   静态链接进可执行文件，因此无法做成全静态。
 - **Windows**：`windeployqt` 会把 Qt DLL 与插件部署到 `auroku-gui.exe` 旁边，
   无需单独安装 Qt。
-- **macOS**：`build-macos.sh` 产出 `dist/auroku-gui.app`（本机架构），并在可用时
+- **macOS**：`.github/scripts/build-macos.sh` 产出 `dist/auroku-gui.app`（本机架构），并在可用时
   调用 `macdeployqt`。
 - **字体**：启动时自动查找系统 CJK 字体（微软雅黑 / Noto Sans CJK / 苹方等）。
   可通过环境变量 `AUROKU_GUI_FONT=/path/to/font.ttf` 指定字体文件或字体族。
@@ -115,19 +115,19 @@ Zadig / 签名 INF 等替代方式与恢复方法详见
 因此还需要一个 C 编译器（Linux/macOS 的 `gcc`/`clang`，Windows 的 MSVC
 Build Tools 或 MinGW-w64）。Qt GUI 还需要 Qt 6.5+、CMake 3.21+ 与 Ninja。
 
-各平台提供本地编译脚本，产物统一放到 `dist/`。**Linux、Windows、macOS 三个
-原生脚本都会同时构建 CLI 与 GUI**。这里的“静态”指 Rust/C 运行时依赖；系统库
-与图形栈是否可静态链接由操作系统决定：
+各平台在 `.github/scripts/` 下提供构建脚本，产物统一放到 `dist/`。**Linux、
+Windows、macOS 三个原生脚本都会同时构建 CLI 与 GUI**。这里的“静态”指 Rust/C
+运行时依赖；系统库与图形栈是否可静态链接由操作系统决定：
 
 | 平台 | 命令 | 产物 |
 | --- | --- | --- |
-| Linux（静态 CLI + Qt 6 GUI） | `chmod +x build-linux.sh && ./build-linux.sh` | `dist/auroku-linux-x86_64`（静态 ELF）、`dist/auroku-gui-linux-x86_64`（Qt 6） |
-| Windows（静态 CRT） | `.\build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-gui-windows-<arch>\auroku-gui.exe`（含 Qt 运行时）、`dist\auroku-windows-<arch>.zip` |
-| macOS（通用 CLI + 本机 GUI） | `chmod +x build-macos.sh && ./build-macos.sh` | `dist/auroku`（arm64 + x86_64）、`dist/auroku-gui.app` |
-| macOS（仅本机架构） | `./build-macos.sh --native` | `dist/auroku`、`dist/auroku-gui.app` |
+| Linux（静态 CLI + Qt 6 GUI） | `chmod +x .github/scripts/build-linux.sh && ./.github/scripts/build-linux.sh` | `dist/auroku-linux-x86_64`（静态 ELF）、`dist/auroku-gui-linux-x86_64`（Qt 6） |
+| Windows（静态 CRT + 静态 libwdi） | `.\.github\scripts\build-windows.ps1` | `dist\auroku.exe`、`dist\auroku-gui-windows-<arch>\auroku-gui.exe`（含 Qt 运行时与 `auroku.exe`）、`dist\auroku-windows-<arch>-v<version>.zip` |
+| macOS（通用 CLI + 本机 GUI） | `chmod +x .github/scripts/build-macos.sh && ./.github/scripts/build-macos.sh` | `dist/auroku`（arm64 + x86_64）、`dist/auroku-gui.app` |
+| macOS（仅本机架构） | `./.github/scripts/build-macos.sh --native` | `dist/auroku`、`dist/auroku-gui.app` |
 
 需要复现 debug 构建（不优化、带调试符号）时，设置 `AUROKU_BUILD_DEBUG=1`，或给
-shell 脚本加 `--debug` / 给 `build-windows.ps1` 加 `-Debug`。Qt GUI 会跟随该
+shell 脚本加 `--debug` / 给 `.github/scripts/build-windows.ps1` 加 `-Debug`。Qt GUI 会跟随该
 选择（`CMAKE_BUILD_TYPE` 由 cargo profile 推导），不会出现 debug CLI 搭配
 release GUI 的混搭。
 
@@ -157,7 +157,7 @@ readelf -l dist/auroku-linux-x86_64 | grep INTERP   # 无输出
 ldd dist/auroku-linux-x86_64                        # not a dynamic executable
 ```
 
-`build-linux.sh` 在构建结束后会自动执行上述静态性检查，失败时直接退出。
+`.github/scripts/build-linux.sh` 在构建结束后会自动执行上述静态性检查，失败时直接退出。
 Rust 后端也已链接进 GUI，因此 GUI 不应再引用旧的共享库：
 
 ```bash
@@ -172,7 +172,7 @@ objdump -p dist\auroku.exe | Select-String 'DLL Name'
 # api-ms-win-core-synch-*.dll —— 这些都是 Windows 自带系统 DLL。
 ```
 
-`build-windows.ps1` 会自动执行该检查，一旦 CLI 意外依赖 MinGW / Qt / FFI DLL
+`.github/scripts/build-windows.ps1` 会自动执行该检查，一旦 CLI 意外依赖 MinGW / Qt / FFI DLL
 就会直接失败。Qt GUI 有意**不是**全静态的：它在运行时加载 Qt 6，而 Rust 后端、
 libusb 及其依赖都已直接链接进 `auroku-gui.exe`。
 
@@ -201,7 +201,7 @@ C_INCLUDE_PATH=/usr/include:/usr/include/x86_64-linux-gnu \
 ```
 
 产物：`target/x86_64-unknown-linux-musl/release/auroku`（静态 ELF）。推荐直接
-使用 `build-linux.sh`，它会准备 UAPI 头文件并自动校验静态性。
+使用 `.github/scripts/build-linux.sh`，它会准备 UAPI 头文件并自动校验静态性。
 
 ### 交叉编译 Linux（x86_64 静态 musl）
 
@@ -217,7 +217,7 @@ Windows 上可用 Zig 交叉编译，无需 WSL / Docker：
 （x86_64 静态 ELF，无运行时依赖；访问 USB 设备需要 root 或对应 udev 规则）
 
 该交叉编译脚本只产出静态 CLI：Qt GUI 需要完整的 Linux Qt 6 sysroot 与 C++
-工具链。请在 Linux 上运行 `./build-linux.sh` 构建 GUI，或直接下载 Release
+工具链。请在 Linux 上运行 `./.github/scripts/build-linux.sh` 构建 GUI，或直接下载 Release
 中的 Linux 包。
 
 ### 构建 macOS 通用二进制（arm64 + x86_64）
@@ -225,8 +225,8 @@ Windows 上可用 Zig 交叉编译，无需 WSL / Docker：
 需要在 macOS 上执行（安装 Xcode Command Line Tools）：
 
 ```bash
-chmod +x build-macos.sh
-./build-macos.sh
+chmod +x .github/scripts/build-macos.sh
+./.github/scripts/build-macos.sh
 ```
 
 脚本会分别为 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` 编译 CLI，再用
@@ -234,7 +234,7 @@ chmod +x build-macos.sh
 
 产物：`dist/auroku`（通用 CLI）、`dist/auroku-gui.app`（本机架构 Qt GUI）
 
-仅构建当前机器架构可使用 `./build-macos.sh --native`（速度更快）。
+仅构建当前机器架构可使用 `./.github/scripts/build-macos.sh --native`（速度更快）。
 
 > macOS 不支持完全静态的可执行文件：libSystem 与系统框架必须动态链接。
 > 脚本已将全部 Rust 依赖与 vendored libusb 静态链接，除此之外没有可用的
@@ -242,31 +242,35 @@ chmod +x build-macos.sh
 
 ## GitHub Actions
 
-工作流位于 `.github/workflows/build.yml`，一次触发即可完成
-**测试 → 三平台构建 → 发布 Release**：
+`.github/workflows/build.yml` 提供两种构建模式：
 
-- **Pull request**：只运行 `cargo fmt --check`、`cargo clippy -D warnings`
-  与 `cargo test`。
-- **手动触发（workflow_dispatch）**：填写版本号（如 `v0.2.0-qt6`，省略 `v`
-  会自动补全），可选预发布 / 草稿。工作流会先跑测试，再并行构建
-  Windows、Linux（musl 静态）与 macOS 通用二进制，最后自动创建
-  GitHub Release 并上传全部产物。
-- **推送 `v*` 标签**：同样在一次运行内完成测试、构建与发布。
+- **推送任意分支** → **debug 构建**：Windows（MSVC + 静态 libwdi + Qt GUI）、
+  Linux（musl 静态 CLI + Qt GUI）与 macOS（通用 CLI + 本机 Qt GUI）均以 dev
+  profile（不优化、带调试符号）编译，只作为 Actions 工件上传（名称带
+  `-debug`），**不会**出现在 Releases 页面。
+- **手动触发，模式选 `release`** → 发布构建：同样三平台，优化编译，并创建/
+  发布 GitHub Release。需填写版本号（如 `v0.3.2-qt6`，省略 `v` 会自动补全），
+  可选预发布 / 草稿。
+- **手动触发，模式选 `debug`** → 与提交触发的 debug 构建相同。
+- **Pull request** → 只跑 `cargo fmt --check`、`cargo clippy -D warnings` 与
+  `cargo test`。
 
 构建脚本同样识别 `AUROKU_BUILD_DEBUG=1`（或 `--debug` / `-Debug`），因此可以在
 本地复现三平台的 debug 构建；产物不优化且带调试符号。
 
-Windows 发布任务会使用 orphan `libwdi-static` 分支上可复用流水线一次性构建、
-并由不可变 tag `libwdi-1.5.1-x64-r1` 固定的**静态 libwdi**，链接进两个二进制，
-因此发布版安装 WinUSB 驱动无需外部 `wdi-simple.exe`。构建配方与 LGPL 合规说明
-见 [docs/windows-driver.md](docs/windows-driver.md)。
+Windows 任务不再自行构建 libwdi：orphan 分支 `libwdi-static` 上可复用且由不可变
+tag 固定的流水线每次运行只构建一次，并把 `libwdi-static` 工件交给 Windows job
+（tag `libwdi-1.5.1-x64-r1`）。构建脚本检测到 `LIBWDI_LIB_DIR` 后把 libwdi
+链接进两个二进制（只需一次 UAC，无需外部 `wdi-simple.exe`），并打包
+`LICENSE-LGPL-3.0.txt`。构建配方与 LGPL 合规说明见
+[docs/windows-driver.md](docs/windows-driver.md)。
 
-产物（每个包内均包含 CLI 与 Qt 6 GUI）：
+产物（每个包内均包含 CLI 与 Qt 6 GUI；debug 构建在文件名后加 `-debug`）：
 
-- `auroku-windows-x86_64.zip`（静态 CRT CLI + 含 Qt 运行时的 GUI 目录；
-  链接 libwdi 时另附 `LICENSE-LGPL-3.0.txt`）
-- `auroku-linux-x86_64.tar.gz`（musl 静态 CLI + Qt 6 GUI）
-- `auroku-macos-universal.zip`（通用 CLI + `auroku-gui.app`）
+- `auroku-windows-x86_64-v<version>.zip`（静态 CRT CLI + 含 Qt 运行时与
+  `auroku.exe` 的 GUI 目录；链接 libwdi 时另附 `LICENSE-LGPL-3.0.txt`）
+- `auroku-linux-x86_64-v<version>.tar.gz`（musl 静态 CLI + Qt 6 GUI）
+- `auroku-macos-universal-v<version>.zip`（通用 CLI + `auroku-gui.app`）
 
 Linux GUI 在 `ubuntu-22.04` 上针对工作流安装的 Qt 6.8 SDK 构建；目标机需要
 安装 Qt 6 运行时（或自行打包 Qt 库）。同一包内的 CLI 仍然是完全静态的。

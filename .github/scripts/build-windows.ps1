@@ -16,16 +16,16 @@
       - GNU targets need MinGW-w64 (e.g. via MSYS2)
 
 .EXAMPLE
-    .\build-windows.ps1
+    .\\.github\\scripts\\build-windows.ps1
 
 .EXAMPLE
-    .\build-windows.ps1 -QtPrefix "C:\Qt\6.8.3\mingw_64"
+    .\\.github\\scripts\\build-windows.ps1 -QtPrefix "C:\Qt\6.8.3\mingw_64"
 
 .EXAMPLE
-    .\build-windows.ps1 -SkipGui
+    .\\.github\\scripts\\build-windows.ps1 -SkipGui
 
 .EXAMPLE
-    .\build-windows.ps1 -Debug
+    .\\.github\\scripts\\build-windows.ps1 -Debug
 
 .OUTPUTS
     dist\auroku.exe
@@ -42,7 +42,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
+# The script lives in .github/scripts; build from the repository root.
+Set-Location (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 # ---------------------------------------------------------------------------
 # Static CRT / dependency verification
@@ -52,9 +53,9 @@ Set-Location $PSScriptRoot
 # dynamic C runtime or a sibling DLL.
 
 function Find-Dumpbin {
-    $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual StudioInstallerswhere.exe'
+    $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
-        $found = & $vswhere -latest -products * -find 'VCToolsMSVC**inHostx64ddumpbin.exe' 2>$null
+        $found = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' 2>$null
         if ($found) { return @($found)[0] }
     }
     $command = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
@@ -65,7 +66,10 @@ function Find-Dumpbin {
 function Assert-StaticRuntime {
     param(
         [string]$Exe,
-        [string]$Dumpbin
+        [string]$Dumpbin,
+        # Qt links the official DLLs against the dynamic MSVC runtime (/MD),
+        # so the GUI only rejects a *foreign* runtime leak (MinGW/FFI/libwdi).
+        [switch]$AllowMsvcRuntime
     )
 
     $lines = @(& $Dumpbin /nologo /dependents $Exe)
@@ -79,20 +83,25 @@ function Assert-StaticRuntime {
             if ($imports.Count -gt 0) { break }
             continue
         }
-        if ($text -match '(?i).dll$') { $imports += $text.ToLowerInvariant() }
+        if ($text -match '(?i)\.dll$') { $imports += $text.ToLowerInvariant() }
     }
     if ($imports.Count -eq 0) { throw "could not parse the import table of $Exe" }
 
     $banned = @(
-        'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll',
-        'concrt140.dll', 'ucrtbase.dll',
-        'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'winpthread-1.dll'
+        'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'winpthread-1.dll',
+        'auroku_ffi.dll', 'libwdi.dll'
     )
+    if (-not $AllowMsvcRuntime) {
+        $banned += @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll',
+                     'concrt140.dll', 'ucrtbase.dll')
+    }
     $bad = $imports | Where-Object {
-        ($banned -contains $_) -or ($_ -like 'vcruntime*') -or ($_ -like 'msvcp140*') -or ($_ -like 'api-ms-win-crt-*')
+        if ($banned -contains $_) { return $true }
+        if ($AllowMsvcRuntime) { return $false }
+        ($_ -like 'vcruntime*') -or ($_ -like 'msvcp140*') -or ($_ -like 'api-ms-win-crt-*')
     }
     if ($bad) {
-        throw ("{0} still imports a dynamic C runtime: {1}" -f $Exe, ($bad -join ', '))
+        throw ("{0} still imports a forbidden runtime DLL: {1}" -f $Exe, ($bad -join ', '))
     }
 
     Write-Host ("    {0}: {1} imports -> {2}" -f (Split-Path $Exe -Leaf), $imports.Count, ($imports -join ', '))
@@ -143,12 +152,12 @@ if ($env:LIBWDI_LIB_DIR -and (Test-Path $env:LIBWDI_LIB_DIR)) {
 Write-Host "==> cargo build $($profileArgs -join ' ') $($features -join ' ') --locked --target $Target --bin auroku (static CRT)"
 cargo build @profileArgs @features --locked --target $Target --bin auroku
 
-$built = Join-Path $PSScriptRoot "target\$Target\$profileDir\auroku.exe"
+$built = Join-Path (Get-Location) "target\$Target\$profileDir\auroku.exe"
 if (-not (Test-Path $built)) {
     throw "Build output not found: $built"
 }
 
-$distDir = Join-Path $PSScriptRoot 'dist'
+$distDir = Join-Path (Get-Location) 'dist'
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
 $distExe = Join-Path $distDir 'auroku.exe'
@@ -227,7 +236,7 @@ if (-not $SkipGui) {
         }
         $env:PATH = "$resolvedQt\bin;$env:PATH"
 
-        $buildDir = Join-Path $PSScriptRoot "build/gui-windows-$arch"
+        $buildDir = Join-Path (Get-Location) "build/gui-windows-$arch"
         if ($debugBuild) { $cmakeBuildType = 'Debug' } else { $cmakeBuildType = 'Release' }
         Write-Host "==> cmake -S gui -B $buildDir -G Ninja -DCMAKE_PREFIX_PATH=$resolvedQt ($cmakeBuildType)"
         & $cmake -S gui -B $buildDir -G Ninja "-DCMAKE_BUILD_TYPE=$cmakeBuildType" `
@@ -344,7 +353,7 @@ if ($env:LIBWDI_LIB_DIR) {
     if (Test-Path $artifactLicense) { $license = $artifactLicense }
 }
 if (-not $license) {
-    $legacyLicense = Join-Path $PSScriptRoot 'libwdi\COPYING-LGPL'
+    $legacyLicense = Join-Path (Get-Location) 'libwdi\COPYING-LGPL'
     if (Test-Path $legacyLicense) {
         $license = $legacyLicense
         Write-Host "==> using the legacy in-tree libwdi license: $legacyLicense"
@@ -371,13 +380,18 @@ if ($Target -like '*-msvc') {
     Write-Host '==> Verifying static CRT (only OS DLLs may be imported)'
     Assert-StaticRuntime -Exe $distExe -Dumpbin $dumpbin
     if ($guiDir) {
-        Assert-StaticRuntime -Exe (Join-Path $guiDir 'auroku-gui.exe') -Dumpbin $dumpbin
+        # Qt officially requires the dynamic MSVC runtime when linking the
+        # official Qt DLLs, so this checks for MinGW/FFI/libwdi leaks only.
+        Assert-StaticRuntime -Exe (Join-Path $guiDir 'auroku-gui.exe') -Dumpbin $dumpbin -AllowMsvcRuntime
     }
 } else {
     Write-Host '==> MSVC not targeted; skipped the dumpbin static-CRT assertion'
 }
 
-$zip = Join-Path $distDir "auroku-windows-$arch$zipSuffix.zip"
+# Versioned archive name (matches the Linux/macOS artifacts and the release
+# workflow glob): auroku-windows-<arch>-v<version>[-debug].zip
+$version = (Select-String -Path (Join-Path (Get-Location) 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+$zip = Join-Path $distDir "auroku-windows-$arch-v$version$zipSuffix.zip"
 Compress-Archive -Path $payload -DestinationPath $zip -Force
 
 Write-Host ""
