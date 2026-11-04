@@ -268,6 +268,44 @@ if (-not $SkipGui) {
             }
         }
 
+        # The official Qt DLLs are linked against the dynamic MSVC runtime (/MD).
+        # windeployqt --compiler-runtime copies the VC++ runtime next to the GUI
+        # in the build directory, but the generic Qt6*.dll/plugin copy above does
+        # not pick it up. A per-user NSIS installer cannot rely on a system-wide
+        # VC++ redistributable, so mirror those DLLs into the payload.
+        # Debug builds import the non-redistributable *d.dll CRT; those are only
+        # mirrored when windeployqt deployed them and are not a hard requirement
+        # (the debug artifact is internal and runs on machines with the SDK).
+        if (-not $qtIsMinGW) {
+            foreach ($runtime in @('msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll',
+                                   'vcruntime140.dll', 'vcruntime140_1.dll', 'concrt140.dll',
+                                   'msvcp140d.dll', 'vcruntime140d.dll', 'vcruntime140_1d.dll',
+                                   'concrt140d.dll')) {
+                $source = Join-Path $buildDir $runtime
+                if (Test-Path $source) {
+                    Copy-Item $source $guiDir -Force
+                }
+            }
+            # windeployqt may also deploy the software OpenGL fallback.
+            $openglSw = Join-Path $buildDir 'opengl32sw.dll'
+            if (Test-Path $openglSw) {
+                Copy-Item $openglSw $guiDir -Force
+            }
+            $hasReleaseRuntime = (Test-Path (Join-Path $guiDir 'msvcp140.dll')) -and
+                                 (Test-Path (Join-Path $guiDir 'vcruntime140.dll'))
+            $hasDebugRuntime = (Test-Path (Join-Path $guiDir 'msvcp140d.dll')) -and
+                               (Test-Path (Join-Path $guiDir 'vcruntime140d.dll'))
+            if (-not $debugBuild) {
+                foreach ($required in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+                    if (-not (Test-Path (Join-Path $guiDir $required))) {
+                        throw "the Qt GUI payload is missing the VC++ runtime DLL $required (windeployqt --compiler-runtime did not deploy it)"
+                    }
+                }
+            } elseif (-not ($hasReleaseRuntime -or $hasDebugRuntime)) {
+                Write-Warning 'the debug Qt GUI payload has no VC++ runtime DLLs from windeployqt; the debug artifact relies on the build machine SDK (debug CRT is not redistributable)'
+            }
+        }
+
         # Headless testing / CI: ship the offscreen and minimal platform plugins
         # so `--smoke-test` works without an interactive desktop.
         $platformsDir = Join-Path $guiDir 'platforms'
@@ -372,6 +410,24 @@ if ($license) {
 
 if ($guiDir -and $license) {
     Copy-Item $licenseCopy (Join-Path $guiDir 'LICENSE-LGPL-3.0.txt') -Force
+}
+
+# The project's own LICENSE and the third-party notices are part of every
+# distributed payload (the NSIS installer installs this directory verbatim and
+# also shows a combined license page).
+$repoLicense = Join-Path (Get-Location) 'LICENSE'
+if (-not (Test-Path $repoLicense)) {
+    throw 'LICENSE not found in the repository root'
+}
+Copy-Item $repoLicense (Join-Path $distDir 'LICENSE') -Force
+if ($guiDir) {
+    Copy-Item $repoLicense (Join-Path $guiDir 'LICENSE') -Force
+    $notices = Join-Path (Get-Location) 'gui\installer\THIRD-PARTY-NOTICES.txt'
+    if (Test-Path $notices) {
+        Copy-Item $notices (Join-Path $guiDir 'THIRD-PARTY-NOTICES.txt') -Force
+    } else {
+        Write-Warning 'gui/installer/THIRD-PARTY-NOTICES.txt is missing; the installed payload will only carry the repository LICENSE'
+    }
 }
 
 if ($Target -like '*-msvc') {

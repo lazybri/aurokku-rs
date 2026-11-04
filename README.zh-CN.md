@@ -109,6 +109,16 @@ auroku --op restore-driver --vid 04C5 --pid 1270
 Zadig / 签名 INF 等替代方式与恢复方法详见
 [docs/windows-driver.md](docs/windows-driver.md)。
 
+### Windows 安装包（NSIS，per-user）
+
+CI 还会为 Windows 生成单文件 NSIS 安装包
+`auroku-windows-<arch>-v<version>-setup.exe`：按当前用户安装到
+`%LOCALAPPDATA%\Programs\auroku`（不需要管理员权限），内含 Qt 6 运行时、
+VC++ 运行时（MSVC 构建）、`auroku.exe` 与许可文件，创建开始菜单项与
+HKCU 卸载项，并支持静默安装/卸载（`/S`、`/D=`、`/DESKTOP`、
+`/PURGEDATA`）。与 portable zip 并存；下载、静默部署、升级/卸载与内测
+反馈流程见 [docs/qt6-installer.md](docs/qt6-installer.md)。
+
 ## 构建
 
 需要 Rust 工具链（<https://rustup.rs>）。`rusb` 使用 vendored libusb，
@@ -251,6 +261,9 @@ chmod +x .github/scripts/build-macos.sh
 - **手动触发，模式选 `release`** → 发布构建：同样三平台，优化编译，并创建/
   发布 GitHub Release。需填写版本号（如 `v0.3.2-qt6`，省略 `v` 会自动补全），
   可选预发布 / 草稿。
+- **手动触发，模式选 `beta`** → 内测构建：与 release 模式相同的优化
+  （release profile）产物，只作为 Actions 工件上传（名称带 `-beta`，如
+  `windows-x86_64-beta`），**不会**创建 GitHub Release；version 输入被忽略。
 - **手动触发，模式选 `debug`** → 与提交触发的 debug 构建相同。
 - **Pull request** → 只跑 `cargo fmt --check`、`cargo clippy -D warnings` 与
   `cargo test`。
@@ -269,6 +282,9 @@ tag 固定的流水线每次运行只构建一次，并把 `libwdi-static` 工�
 
 - `auroku-windows-x86_64-v<version>.zip`（静态 CRT CLI + 含 Qt 运行时与
   `auroku.exe` 的 GUI 目录；链接 libwdi 时另附 `LICENSE-LGPL-3.0.txt`）
+- `auroku-windows-x86_64-v<version>-setup.exe`（per-user NSIS 安装包，由
+  `.github/scripts/build-installer.ps1` 构建，与 zip 一起上传；debug 构建时两者
+  文件名都带 `-debug` 后缀）
 - `auroku-linux-x86_64-v<version>.tar.gz`（musl 静态 CLI + Qt 6 GUI）
 - `auroku-macos-universal-v<version>.zip`（通用 CLI + `auroku-gui.app`）
 

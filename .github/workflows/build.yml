@@ -11,10 +11,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "构建类型：release 发布会传到 Releases；debug 只上传 Actions 构件"
+        description: "构建类型：release 发布会传到 Releases；beta 内测 release 构建只上传 Actions 构件；debug 只上传 Actions 构件"
         type: choice
         options:
           - release
+          - beta
           - debug
         default: release
       version:
@@ -104,7 +105,10 @@ jobs:
             os: windows-latest
             rust_targets: x86_64-pc-windows-msvc
             qt_arch: win64_msvc2022_64
-            glob: dist/*.zip
+            # The portable zip and the per-user NSIS installer.
+            glob: |
+              dist/*.zip
+              dist/*-setup.exe
           - name: linux-x86_64
             # 22.04 keeps the dynamically linked GUI compatible with glibc 2.35+.
             os: ubuntu-22.04
@@ -169,6 +173,20 @@ jobs:
           "LIBWDI_LIB_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "==> LIBWDI_LIB_DIR=$libDir"
 
+      - name: Install NSIS
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $nsisExe = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'NSIS\makensis.exe'
+          if (-not (Test-Path $nsisExe)) {
+            throw 'NSIS installation failed: makensis.exe not found'
+          }
+          $nsisDir = Split-Path $nsisExe -Parent
+          $nsisDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "NSISDIR=$nsisDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & $nsisExe /VERSION
+
       - name: Build & package (Windows, static CRT + static libwdi + Qt GUI)
         if: matrix.name == 'windows-x86_64'
         shell: pwsh
@@ -184,6 +202,26 @@ jobs:
           if ($process.ExitCode -ne 0) {
             throw "GUI smoke test failed with exit code $($process.ExitCode)"
           }
+
+      - name: Build NSIS installer (Windows, per-user)
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $suffix = ''
+          if ($env:AUROKU_BUILD_DEBUG -eq '1') { $suffix = '-debug' }
+          $outFile = 'dist/auroku-windows-x86_64-v' + $version + $suffix + '-setup.exe'
+          ./.github/scripts/build-installer.ps1 -Version $version -PayloadDir 'dist/auroku-gui-windows-x86_64' -OutFile $outFile -Arch x86_64
+
+      - name: Installer smoke test (silent install -> offscreen GUI -> silent uninstall)
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'the NSIS setup executable was not produced' }
+          $params = @{ SetupExe = $setup.FullName; Arch = 'x86_64' }
+          if ($env:AUROKU_BUILD_DEBUG -ne '1') { $params['ExpectMsvcRuntime'] = $true }
+          ./.github/scripts/test-installer.ps1 @params
 
       - name: Build (Linux musl, fully static CLI + Qt GUI)
         if: matrix.name == 'linux-x86_64'
@@ -232,7 +270,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '-debug' || '' }}
+          name: ${{ matrix.name }}${{ (github.event_name == 'push' || github.event.inputs.mode == 'debug') && '-debug' || (github.event.inputs.mode == 'beta' && '-beta' || '') }}
           path: ${{ matrix.glob }}
           if-no-files-found: error
 

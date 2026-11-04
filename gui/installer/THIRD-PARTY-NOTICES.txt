@@ -1,0 +1,47 @@
+auRokku (Qt6) - third-party notices
+=====================================
+
+auRokku itself is distributed under the terms of the repository LICENSE (the
+full text is installed as LICENSE next to the application). The Windows
+package also contains the following third-party components.
+
+Qt 6 (Qt Widgets runtime)
+-------------------------
+Copyright (C) The Qt Company Ltd.
+License: GNU Lesser General Public License, version 3 (LGPLv3), or a
+commercial Qt license.
+Homepage: https://www.qt.io/
+The Qt runtime is shipped as unmodified dynamic libraries (Qt6*.dll) and
+plugins next to auroku-gui.exe. The corresponding Qt source code is available
+from https://download.qt.io/ and from the Qt Company. Relinking against a
+modified Qt 6 build is possible by replacing the shipped Qt6*.dll files.
+
+libwdi (WinUSB driver installation helper; Windows release builds only)
+-----------------------------------------------------------------------
+Copyright (C) Pete Batard <pete@akeo.ie> and contributors.
+License: GNU Lesser General Public License, version 3 (LGPLv3).
+Homepage: https://github.com/pbatard/libwdi
+The release build links libwdi statically into auroku.exe and auroku-gui.exe.
+The full LGPLv3 text is installed as LICENSE-LGPL-3.0.txt. The complete
+corresponding source of the pinned libwdi build and the scripts used to build
+it are published in the public repository
+https://github.com/lazybri/aurokku-rs (orphan branch libwdi-static, tag
+libwdi-1.5.1-x64-r1), which satisfies the LGPLv3 relinking requirement.
+
+libusb (via the rusb crate, statically linked)
+----------------------------------------------
+Copyright (C) 2001-2021 the libusb contributors.
+License: GNU Lesser General Public License, version 2.1 (LGPL-2.1).
+Homepage: https://libusb.info/
+
+Rust standard library and crates (statically linked)
+----------------------------------------------------
+Rust standard library: MIT / Apache-2.0.
+Other Rust dependencies and their licenses are listed in Cargo.lock and in
+the upstream crates.
+
+Windows system components
+-------------------------
+The package redistributes no Windows system files; the Microsoft Visual C++
+runtime DLLs are only included when the official Qt MSVC binaries require them
+(redistributable under the Visual Studio license terms).

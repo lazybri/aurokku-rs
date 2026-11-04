@@ -130,6 +130,18 @@ every step is logged to `%LOCALAPPDATA%\auroku\driver.log` (override the
 directory with `AUROKU_STATE_DIR`). Full details, Zadig / signed-INF
 alternatives and recovery: [docs/windows-driver.md](docs/windows-driver.md).
 
+### Windows installer (NSIS, per-user)
+
+CI also produces a single-file NSIS installer for Windows,
+`auroku-windows-<arch>-v<version>-setup.exe`. It installs per-user into
+`%LOCALAPPDATA%\Programs\auroku` (no administrator rights), ships the Qt 6
+runtime, the VC++ runtime (MSVC builds), `auroku.exe` and the license
+files, adds Start menu shortcuts and a per-user uninstall entry, and supports
+silent install/uninstall (`/S`, `/D=`, `/DESKTOP`, `/PURGEDATA`).
+It coexists with the portable zip. See
+[docs/qt6-installer.md](docs/qt6-installer.md) for download, silent
+deployment, upgrade/uninstall and beta feedback details.
+
 ## Building
 
 Requires a Rust toolchain (<https://rustup.rs>). `rusb` uses vendored libusb, so
@@ -285,6 +297,10 @@ To build only the current machine architecture, use `./.github/scripts/build-mac
   optimised, and the workflow creates/publishes a GitHub Release. Enter the
   version (e.g. `v0.3.2-qt6`; a missing `v` is added automatically) and
   optionally mark it prerelease/draft.
+- **Manual dispatch, mode = `beta`** → internal beta build: the same optimised
+  (release profile) binaries as the release mode, uploaded only as workflow
+  artifacts whose names end in `-beta` (`windows-x86_64-beta`, ...). No GitHub
+  Release is created; the version input is ignored.
 - **Manual dispatch, mode = `debug`** → same debug build as a commit push.
 - **Pull request** → only `cargo fmt --check`, `cargo clippy -D warnings` and
   `cargo test`.
@@ -306,6 +322,9 @@ Artifacts (each package contains the CLI and the Qt 6 GUI; debug builds append
 
 - `auroku-windows-x86_64-v<version>.zip` (static-CRT CLI + GUI folder with the
   Qt runtime and `auroku.exe`; plus `LICENSE-LGPL-3.0.txt` when libwdi is linked)
+- `auroku-windows-x86_64-v<version>-setup.exe` (per-user NSIS installer,
+  built by `.github/scripts/build-installer.ps1` and uploaded together with the
+  zip; debug builds add the `-debug` suffix to both files)
 - `auroku-linux-x86_64-v<version>.tar.gz` (static musl CLI + Qt 6 GUI)
 - `auroku-macos-universal-v<version>.zip` (universal CLI + `auroku-gui.app`)
 
