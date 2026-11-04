@@ -1,0 +1,18 @@
+[package]
+name = "auroku-core-nostd"
+version = "0.0.0-spike"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "Spike: no_std (+alloc) extraction of the auRokku SERI/Type2Auth protocol core"
+
+# 独立 workspace：避免被 main 仓库根 Cargo.toml 的 [workspace] 吞并，
+# 同时保证不改动 main 的 Cargo.toml / Cargo.lock。
+[workspace]
+
+[dependencies]
+# 协议层需要的两个依赖，都必须关掉默认 std feature：
+#   hex  0.4.3: default = ["std"]；no_std 下用 alloc feature 提供 decode/encode 的 Vec 版本
+#   md-5 0.10.6: default = ["std"] -> digest/std；关闭后 digest 走 no_std 路径
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+md-5 = { version = "0.10", default-features = false }
