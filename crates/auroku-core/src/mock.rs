@@ -43,6 +43,8 @@ pub struct MockTransport {
     now_ms: u64,
     /// Protocol violations seen so far (wrong frame / unexpected write).
     pub violations: Vec<String>,
+    /// Index into [`Self::writes`] for each entry in [`Self::violations`].
+    pub violation_writes: Vec<usize>,
 }
 
 impl Default for MockTransport {
@@ -60,6 +62,7 @@ impl MockTransport {
             chunk: usize::MAX,
             now_ms: 0,
             violations: Vec::new(),
+            violation_writes: Vec::new(),
         }
     }
 
@@ -130,19 +133,23 @@ impl UsbTransport for MockTransport {
         match self.steps.pop_front() {
             Some(step) => {
                 if step.expect_write != data {
+                    let index = self.writes.len().saturating_sub(1);
                     self.violations.push(format!(
                         "write mismatch: expected {:02x?}, got {:02x?}",
                         step.expect_write, data
                     ));
+                    self.violation_writes.push(index);
                 }
                 self.rx.extend(step.response);
                 let _ = timeout;
                 Ok(())
             }
             None => {
+                let index = self.writes.len().saturating_sub(1);
                 self.violations.push(format!(
                     "unexpected write with no scripted step left: {data:02x?}"
                 ));
+                self.violation_writes.push(index);
                 Err(AuRokkuError::Runtime(
                     "mock transport: unexpected write".to_string(),
                 ))

@@ -127,4 +127,10 @@ impl<D: Display, I: Input, C: Clock, T: UsbTransport> App<D, I, C, T> {
     pub fn config(&self) -> &AppConfig {
         &self.config
     }
+
+    /// Test/diagnostic access to the attached transport (e.g. to assert that a
+    /// scripted phone saw exactly the expected frames).
+    pub fn link_mut(&mut self) -> Option<&mut T> {
+        self.link.as_mut()
+    }
 }

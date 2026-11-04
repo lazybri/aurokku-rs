@@ -1,0 +1,14 @@
+[package]
+name = "auroku-emu-tests"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "Host harness that boots the auroku RP2354 test firmware in rp2350-emu and checks the SRAM mailbox"
+publish = false
+
+[dependencies]
+rp2350-emu = "0.2"
+# ELF parsing for the firmware image; default features bring the `read` API
+# (`object::File`).
+object = "0.36"

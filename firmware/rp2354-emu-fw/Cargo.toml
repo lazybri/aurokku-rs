@@ -1,0 +1,24 @@
+[package]
+name = "auroku-rp2354-emu-fw"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "RP2350-emu test firmware: runs auroku-firmware scenarios on the emulated RP2354 and reports through an SRAM mailbox"
+
+# Standalone workspace: this crate only ever builds for the Cortex-M33 target
+# (custom linker script + no_main), so it is not a member of the root workspace.
+[workspace]
+
+[dependencies]
+auroku-core = { path = "../../crates/auroku-core" }
+auroku-firmware = { path = "../auroku-firmware" }
+
+[profile.release]
+# Production-like optimisation. The emulator models a Thumb-32 subset; earlier
+# experiments with lower opt-levels produced *worse* emulator behaviour, so the
+# firmware under test uses the normal release profile.
+lto = true
+strip = false
+panic = "abort"
+codegen-units = 1

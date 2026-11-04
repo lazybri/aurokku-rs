@@ -1,9 +1,13 @@
 [workspace]
 # rp2354 is the RP2354 firmware branch: the desktop application lives on the
 # `main` / `qt6` branches. Members:
-# - crates/auroku-core:     no_std + alloc protocol core (shared with desktop)
+# - crates/auroku-core:       no_std + alloc protocol core (shared with desktop)
 # - firmware/auroku-firmware: RP2354 firmware logic, host-testable with mocks
-members = ["crates/auroku-core", "firmware/auroku-firmware"]
+# - firmware/emu-tests:       host harness booting the firmware in rp2350-emu
+#
+# firmware/rp2354-emu-fw is a standalone (Cortex-M33 only) package with its own
+# linker script; it is built explicitly by scripts/emu-test.ps1 and CI.
+members = ["crates/auroku-core", "firmware/auroku-firmware", "firmware/emu-tests"]
 resolver = "2"
 
 [profile.release]

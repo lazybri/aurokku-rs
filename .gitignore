@@ -1,2 +1,4 @@
 /target
 /dist
+# Standalone emulator-firmware workspace (built by scripts/emu-test.ps1).
+/firmware/rp2354-emu-fw/target

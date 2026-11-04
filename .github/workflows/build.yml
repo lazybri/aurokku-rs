@@ -1,7 +1,8 @@
 name: firmware-ci
 
-# rp2354 branch CI: host-side mock tests + Cortex-M33 cross build.
-# (The desktop release pipeline lives on main/qt6 and is intentionally absent.)
+# rp2354 branch CI: host mock tests, rp2350-emu firmware mock tests, and the
+# Cortex-M33 cross build. (The desktop release pipeline lives on main/qt6 and is
+# intentionally absent.)
 
 on:
   push:
@@ -22,7 +23,23 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --exclude auroku-emu-tests
+
+  emulator-mock-tests:
+    name: rp2350-emu firmware mock tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv8m.main-none-eabihf
+      - name: build emulator firmware
+        run: cargo build --manifest-path firmware/rp2354-emu-fw/Cargo.toml --target thumbv8m.main-none-eabihf --release
+      - name: run rp2350-emu mock tests
+        env:
+          AUROKU_EMU_FW_ELF: firmware/rp2354-emu-fw/target/thumbv8m.main-none-eabihf/release/auroku-rp2354-emu-fw
+          AUROKU_REQUIRE_EMU: "1"
+        run: cargo test -p auroku-emu-tests -- --nocapture
 
   firmware-target:
     name: Cortex-M33 build (thumbv8m.main-none-eabihf)
