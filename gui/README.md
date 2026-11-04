@@ -58,7 +58,7 @@ package (`getfacl` and `setfacl`).
 `crates/auroku-ffi` exports (C ABI **version 2**):
 
 ```c
-/* Plain version string, e.g. "auroku-ffi 0.3.3-qt6 (abi 2)". */
+/* Plain version string, e.g. "auroku-ffi 0.3.4-qt6 (abi 2)". */
 char *auroku_ffi_version(void);
 char *auroku_scan_devices(int vid, int pid);   /* < 0 = no filter */
 char *auroku_run_task(const char *request_json, AurokuLogCallback cb, void *user);

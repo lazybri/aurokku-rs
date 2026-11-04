@@ -249,7 +249,7 @@ chmod +x .github/scripts/build-macos.sh
   profile（不优化、带调试符号）编译，只作为 Actions 工件上传（名称带
   `-debug`），**不会**出现在 Releases 页面。
 - **手动触发，模式选 `release`** → 发布构建：同样三平台，优化编译，并创建/
-  发布 GitHub Release。需填写版本号（如 `v0.3.3-qt6`，省略 `v` 会自动补全），
+  发布 GitHub Release。需填写版本号（如 `v0.3.4-qt6`，省略 `v` 会自动补全），
   可选预发布 / 草稿。
 - **手动触发，模式选 `debug`** → 与提交触发的 debug 构建相同。
 - **Pull request** → 只跑 `cargo fmt --check`、`cargo clippy -D warnings` 与
@@ -362,7 +362,7 @@ auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
 
 每个发布版本对应的完整**对应源码（Corresponding Source）**就是与版本同名的
 Git tag 下的源码树，例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.3-qt6>（全部 tag 见
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.4-qt6>（全部 tag 见
 <https://github.com/lazybri/aurokku-rs/tags>）。该 tag 包含生成发布产物所需的
 Qt/CMake 构建文件、Rust 构建脚本与 GitHub Actions 工作流。
 

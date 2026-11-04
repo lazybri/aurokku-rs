@@ -283,7 +283,7 @@ To build only the current machine architecture, use `./.github/scripts/build-mac
   Releases page.
 - **Manual dispatch, mode = `release`** → release build: same three platforms,
   optimised, and the workflow creates/publishes a GitHub Release. Enter the
-  version (e.g. `v0.3.3-qt6`; a missing `v` is added automatically) and
+  version (e.g. `v0.3.4-qt6`; a missing `v` is added automatically) and
   optionally mark it prerelease/draft.
 - **Manual dispatch, mode = `debug`** → same debug build as a commit push.
 - **Pull request** → only `cargo fmt --check`, `cargo clippy -D warnings` and
@@ -402,7 +402,7 @@ version 3 only (`GPL-3.0-only`)**. The complete licence text is
 
 The complete **Corresponding Source** of a release is the source tree at the
 matching Git tag, for example
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.3-qt6> (all tags:
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.4-qt6> (all tags:
 <https://github.com/lazybri/aurokku-rs/tags>). The tag contains the Qt/CMake
 files, Rust build scripts and GitHub Actions workflow that produce the released
 binaries.

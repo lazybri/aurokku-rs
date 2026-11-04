@@ -38,7 +38,7 @@
 #include "ui/pages/UimPage.h"
 
 #ifndef AUROKU_APP_VERSION
-#define AUROKU_APP_VERSION "0.3.3-qt6"
+#define AUROKU_APP_VERSION "0.3.4-qt6"
 #endif
 
 namespace {

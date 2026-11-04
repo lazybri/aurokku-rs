@@ -18,7 +18,7 @@ on:
           - debug
         default: release
       version:
-        description: "发布版本号（仅 release，如 v0.3.3-qt6；省略 v 会自动补全）"
+        description: "发布版本号（仅 release，如 v0.3.4-qt6；省略 v 会自动补全）"
         required: false
         type: string
       prerelease:
@@ -278,7 +278,7 @@ jobs:
         run: |
           tag="$INPUT_VERSION"
           if [ -z "$tag" ]; then
-            echo "::error::release 模式必须填写 version（例如 v0.3.3-qt6）"
+            echo "::error::release 模式必须填写 version（例如 v0.3.4-qt6）"
             exit 1
           fi
           case "$tag" in
