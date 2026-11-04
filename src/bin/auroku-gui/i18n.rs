@@ -155,6 +155,9 @@ pub fn t(text: &str) -> &str {
         "刷新驱动状态" => "Refresh driver status",
         "复制驱动日志路径" => "Copy driver log path",
         "驱动日志路径已复制到剪贴板" => "Driver log path copied to clipboard",
+        "设备已重新枚举，正在刷新设备列表…" => {
+            "Device re-enumerated; refreshing the device list…"
+        }
         "上次会话未恢复 {target} 的原始 USB 驱动，可在“WinUSB 驱动”卡片中恢复" => {
             "The previous session did not restore the original USB driver for {target}; you can restore it from the WinUSB driver card."
         }

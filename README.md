@@ -369,7 +369,7 @@ version 3 only (`GPL-3.0-only`)**. The complete licence text is
 
 The complete **Corresponding Source** of a release is the source tree at the
 matching Git tag, for example
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.3> (all tags:
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.4> (all tags:
 <https://github.com/lazybri/aurokku-rs/tags>). The tag contains the build
 scripts and GitHub Actions workflow that produce the released binaries.
 

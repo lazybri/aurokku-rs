@@ -337,7 +337,7 @@ auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
 
 每个发布版本对应的完整**对应源码（Corresponding Source）**就是与版本同名的
 Git tag 下的源码树，例如
-<https://github.com/lazybri/aurokku-rs/tree/v0.3.3>（全部 tag 见
+<https://github.com/lazybri/aurokku-rs/tree/v0.3.4>（全部 tag 见
 <https://github.com/lazybri/aurokku-rs/tags>）。该 tag 包含生成发布产物所用的
 构建脚本与 GitHub Actions 工作流。
 

@@ -494,6 +494,9 @@ impl AurokuApp {
                                     "已为 {target} 安装 WinUSB 驱动",
                                     &[("target", &target)],
                                 ));
+                                // WinUSB re-enumerates the device: drop the cached
+                                // bus address before retrying by VID/PID.
+                                self.refresh_after_driver_change();
                                 if let Some((task, label)) = self.retry_after_driver.take() {
                                     self.notify(
                                         i18n::t("WinUSB 驱动已安装，正在重试…"),
@@ -512,6 +515,7 @@ impl AurokuApp {
                                     &[("target", &target)],
                                 ));
                                 self.notify(i18n::t("已恢复原始 USB 驱动"), Tone::Primary);
+                                self.refresh_after_driver_change();
                             }
                             self.force_driver_status_query();
                         }
@@ -692,6 +696,16 @@ impl AurokuApp {
         let log_path = auroku::driver::log_path().display().to_string();
         self.log(i18n::tf("驱动日志：{path}", &[("path", &log_path)]));
         self.worker.send(Request::RestoreDriver { vid, pid });
+    }
+
+    /// Install/restore re-enumerates the USB device, so the selected device's
+    /// cached bus address is stale. Clear it (the retry then matches by
+    /// VID/PID instead of bus/address) and refresh the scan list.
+    fn refresh_after_driver_change(&mut self) {
+        self.driver_status_cache = None;
+        self.driver_status_query = None;
+        self.scan(false);
+        self.log(i18n::t("设备已重新枚举，正在刷新设备列表…").to_owned());
     }
 
     fn confirm_write(&mut self) {
