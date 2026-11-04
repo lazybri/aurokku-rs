@@ -146,6 +146,25 @@ pnputil /add-driver auroku.inf /install
 Windows 10/11 x64 要求驱动包带有效签名(微软 attestation 或自签名证书导入
 受信任根),否则 `pnputil` 会拒绝安装。
 
+### 方式 E:临时禁用 usbser.sys(仅测试/排查)
+
+如果只是想在测试机上阻止 Windows 把 CDC 设备绑定到 `usbser.sys`,可以临时
+把该内核服务的 `Start` 设为 `4`(`SERVICE_DISABLED`):
+
+- `tools/windows/disable-usbser.reg` — 直接导入的注册表条目;
+- `tools/windows/usbser-service.ps1` — 推荐,带原值备份/恢复、状态查询和
+  `-WhatIf`:
+
+  ```powershell
+  .\tools\windows\usbser-service.ps1 -Action Status
+  .\tools\windows\usbser-service.ps1 -Action Disable   # 管理员权限
+  .\tools\windows\usbser-service.ps1 -Action Restore   # 恢复原始 Start
+  ```
+
+禁用后需重启或重新插拔设备才生效;它会影响机器上所有 CDC 串口设备,且
+**不会安装 WinUSB 或让 libusb 直接访问设备**。完整说明与恢复步骤见
+[windows-disable-usbser.md](windows-disable-usbser.md)。
+
 ## 4. 验证
 
 ```bat

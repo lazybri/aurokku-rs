@@ -71,6 +71,8 @@ PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
   libusb 无法直接打开，需要安装 WinUSB 驱动：可直接使用“概览”页的常驻
   WinUSB 驱动卡，或详见
   [docs/windows-driver.md](docs/windows-driver.md)（Zadig / wdi-simple / 签名 INF）。
+  测试机也可以临时禁用 `usbser.sys` 服务，见
+  [docs/windows-disable-usbser.md](docs/windows-disable-usbser.md)。
 
 ### Linux USB 权限
 

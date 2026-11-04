@@ -80,7 +80,9 @@ Platform notes:
   (it shows up as "USB Serial Device" / COMx) and libusb cannot open it until a
   WinUSB driver is installed — use the resident WinUSB card on the Overview page,
   or see [docs/windows-driver.md](docs/windows-driver.md) for Zadig / wdi-simple /
-  signed-INF instructions.
+  signed-INF instructions. For test machines you can also temporarily disable the
+  `usbser.sys` service with
+  [docs/windows-disable-usbser.md](docs/windows-disable-usbser.md).
 
 ### Linux USB permissions
 
