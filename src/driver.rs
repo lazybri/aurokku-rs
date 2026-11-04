@@ -371,12 +371,14 @@ pub fn restore(
 // --------------------------------------------------------------------------
 
 /// Original `Start` value saved before disabling the usbser.sys service.
+#[cfg(windows)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsbSerRecord {
     pub start: u32,
     pub disabled_at: u64,
 }
 
+#[cfg(windows)]
 impl UsbSerRecord {
     fn to_json(&self) -> Value {
         json!({
@@ -393,16 +395,19 @@ impl UsbSerRecord {
     }
 }
 
+#[cfg(windows)]
 fn usbser_record_path() -> PathBuf {
     state_dir().join("usbser-state.json")
 }
 
+#[cfg(windows)]
 fn load_usbser_record() -> Option<UsbSerRecord> {
     let text = fs::read_to_string(usbser_record_path()).ok()?;
     let value: Value = serde_json::from_str(&text).ok()?;
     UsbSerRecord::from_json(&value)
 }
 
+#[cfg(windows)]
 fn save_usbser_record(record: &UsbSerRecord) -> Result<(), String> {
     let path = usbser_record_path();
     if let Some(parent) = path.parent() {
@@ -414,6 +419,7 @@ fn save_usbser_record(record: &UsbSerRecord) -> Result<(), String> {
     fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
+#[cfg(windows)]
 fn clear_usbser_record() {
     let _ = fs::remove_file(usbser_record_path());
 }
@@ -479,11 +485,6 @@ fn set_usbser_start(value: u32) -> Result<(), String> {
             "reg.exe failed to set usbser Start={value} (elevation denied?)"
         ))
     }
-}
-
-#[cfg(not(windows))]
-fn set_usbser_start(_value: u32) -> Result<(), String> {
-    Err("usbser.sys is only available on Windows".to_owned())
 }
 
 /// Whether the current process has administrator rights.
