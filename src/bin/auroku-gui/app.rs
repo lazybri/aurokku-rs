@@ -469,6 +469,15 @@ impl AurokuApp {
                                 // A driver install must not replay a task that failed for
                                 // an unrelated reason (authentication, protocol, ...).
                                 self.retry_after_driver = None;
+                                // Exiting service mode can make some phones reboot /
+                                // re-enumerate; the cached bus address is then stale.
+                                if error.message.contains("not found") {
+                                    self.notify(
+                                        i18n::t("设备可能已重新枚举，请重新扫描并选择设备"),
+                                        Tone::Warning,
+                                    );
+                                    self.refresh_device_list();
+                                }
                             }
                             self.last_error = Some(error);
                         }
@@ -496,7 +505,7 @@ impl AurokuApp {
                                 ));
                                 // WinUSB re-enumerates the device: drop the cached
                                 // bus address before retrying by VID/PID.
-                                self.refresh_after_driver_change();
+                                self.refresh_device_list();
                                 if let Some((task, label)) = self.retry_after_driver.take() {
                                     self.notify(
                                         i18n::t("WinUSB 驱动已安装，正在重试…"),
@@ -515,7 +524,7 @@ impl AurokuApp {
                                     &[("target", &target)],
                                 ));
                                 self.notify(i18n::t("已恢复原始 USB 驱动"), Tone::Primary);
-                                self.refresh_after_driver_change();
+                                self.refresh_device_list();
                             }
                             self.force_driver_status_query();
                         }
@@ -698,10 +707,11 @@ impl AurokuApp {
         self.worker.send(Request::RestoreDriver { vid, pid });
     }
 
-    /// Install/restore re-enumerates the USB device, so the selected device's
-    /// cached bus address is stale. Clear it (the retry then matches by
-    /// VID/PID instead of bus/address) and refresh the scan list.
-    fn refresh_after_driver_change(&mut self) {
+    /// Driver install/restore (and some phones leaving service mode) re-enumerate
+    /// the USB device, so the selected device's cached bus address is stale.
+    /// Clear it (later operations then match by VID/PID instead of bus/address)
+    /// and refresh the scan list.
+    fn refresh_device_list(&mut self) {
         self.driver_status_cache = None;
         self.driver_status_query = None;
         self.scan(false);
