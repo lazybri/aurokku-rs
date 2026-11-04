@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "auroku"
-version = "0.3.2-qt6"
+version = "0.3.3-qt6"
 edition = "2021"
 rust-version = "1.88"
 description = "SERI / Type2Auth USB device service tool (Rust port of auRokku.py)"

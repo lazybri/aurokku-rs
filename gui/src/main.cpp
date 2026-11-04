@@ -23,7 +23,7 @@
 #include "ui/Theme.h"
 
 #ifndef AUROKU_APP_VERSION
-#define AUROKU_APP_VERSION "0.3.2-qt6"
+#define AUROKU_APP_VERSION "0.3.3-qt6"
 #endif
 
 namespace {
