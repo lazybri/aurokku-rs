@@ -18,6 +18,13 @@ use crate::widgets::{
 };
 use crate::worker::{ApiError, Event, Request, Worker};
 
+/// How often the Windows driver card refreshes its cached service name.
+///
+/// The service only changes on install/restore or device re-enumeration; the
+/// card also forces a query after those events, so polling can stay slow to
+/// avoid spawning a `reg query` process too often.
+const DRIVER_STATUS_REFRESH: Duration = Duration::from_secs(5);
+
 // ==============================================================================
 // Screens
 // ==============================================================================
@@ -191,14 +198,16 @@ pub struct AurokuApp {
     last_op: Option<String>,
     last_success: Option<bool>,
     last_error: Option<ApiError>,
-    /// Device that needs a WinUSB driver (Windows): drives the action card.
-    driver_offer: Option<(u16, u16)>,
+    /// Last driver service reported by the worker (vid, pid, service).
+    driver_status_cache: Option<(u16, u16, Option<String>)>,
+    /// Last driver-status query (target and send time) used for throttling.
+    driver_status_query: Option<((u16, u16), Instant)>,
+    /// Device a previous session left on WinUSB (crash recovery warning).
+    driver_pending_restore: Option<(u16, u16)>,
     /// Task retried automatically after a successful driver installation.
     retry_after_driver: Option<(Task, String)>,
     /// Whether the original driver should be restored when the GUI exits.
     restore_driver_on_exit: bool,
-    /// VID/PID the most recent task was started for.
-    last_target: Option<(u16, u16)>,
 
     // Operation parameters
     writelk_value: String,
@@ -270,10 +279,11 @@ impl AurokuApp {
             last_op: None,
             last_success: None,
             last_error: None,
-            driver_offer: None,
+            driver_status_cache: None,
+            driver_status_query: None,
+            driver_pending_restore: None,
             retry_after_driver: None,
             restore_driver_on_exit: false,
-            last_target: None,
             writelk_value: "80e48ed2".to_owned(),
             writelk_control: true,
             maint_control: true,
@@ -290,9 +300,9 @@ impl AurokuApp {
         app.log(i18n::t("界面已启动，正在扫描 USB 总线").to_owned());
         if let Some(record) = auroku::driver::pending_restore() {
             let target = format!("{:04X}:{:04X}", record.vid, record.pid);
-            app.driver_offer = Some((record.vid, record.pid));
+            app.driver_pending_restore = Some((record.vid, record.pid));
             app.log(i18n::tf(
-                "上次会话未恢复 {target} 的原始 USB 驱动，可在“最近结果”卡片中恢复",
+                "上次会话未恢复 {target} 的原始 USB 驱动，可在“WinUSB 驱动”卡片中恢复",
                 &[("target", &target)],
             ));
         }
@@ -408,6 +418,9 @@ impl AurokuApp {
                                 serde_json::to_string_pretty(&value).unwrap_or_default();
                             self.result = Some(value);
                             self.last_error = None;
+                            // Only a task that failed with DriverError may be replayed
+                            // automatically after the driver is installed.
+                            self.retry_after_driver = None;
                             self.log(i18n::tf(
                                 "{label} 完成：{status}",
                                 &[
@@ -451,7 +464,11 @@ impl AurokuApp {
                                 Tone::Error,
                             );
                             if error.kind == "DriverError" {
-                                self.driver_offer = self.last_target;
+                                self.force_driver_status_query();
+                            } else {
+                                // A driver install must not replay a task that failed for
+                                // an unrelated reason (authentication, protocol, ...).
+                                self.retry_after_driver = None;
                             }
                             self.last_error = Some(error);
                         }
@@ -468,24 +485,35 @@ impl AurokuApp {
                     let target = format!("{vid:04X}:{pid:04X}");
                     match result {
                         Ok(()) => {
-                            self.driver_offer = None;
                             self.last_error = None;
                             if operation == "install" {
+                                if self.driver_pending_restore == Some((vid, pid)) {
+                                    self.driver_pending_restore = None;
+                                }
                                 self.log(i18n::tf(
                                     "已为 {target} 安装 WinUSB 驱动",
                                     &[("target", &target)],
                                 ));
-                                self.notify(i18n::t("WinUSB 驱动已安装，正在重试…"), Tone::Success);
                                 if let Some((task, label)) = self.retry_after_driver.take() {
+                                    self.notify(
+                                        i18n::t("WinUSB 驱动已安装，正在重试…"),
+                                        Tone::Success,
+                                    );
                                     self.start(task, &label);
+                                } else {
+                                    self.notify(i18n::t("WinUSB 驱动已安装"), Tone::Success);
                                 }
                             } else {
+                                if self.driver_pending_restore == Some((vid, pid)) {
+                                    self.driver_pending_restore = None;
+                                }
                                 self.log(i18n::tf(
                                     "已为 {target} 恢复原始 USB 驱动",
                                     &[("target", &target)],
                                 ));
                                 self.notify(i18n::t("已恢复原始 USB 驱动"), Tone::Primary);
                             }
+                            self.force_driver_status_query();
                         }
                         Err(message) => {
                             self.log(i18n::tf(
@@ -496,8 +524,12 @@ impl AurokuApp {
                                 i18n::tf("驱动操作失败：{message}", &[("message", &message)]),
                                 Tone::Error,
                             );
+                            self.force_driver_status_query();
                         }
                     }
+                }
+                Event::DriverStatus { vid, pid, service } => {
+                    self.driver_status_cache = Some((vid, pid, service));
                 }
             }
         }
@@ -623,7 +655,6 @@ impl AurokuApp {
             }
         };
         let label = i18n::t(label).to_owned();
-        self.last_target = Some((config.vid, config.pid));
         self.retry_after_driver = Some((task.clone(), label.clone()));
         self.busy = true;
         self.busy_label = label.clone();
@@ -1068,7 +1099,7 @@ impl AurokuApp {
                         ui,
                         &s,
                         "SN（可选）",
-                        "SKYKA077394 或 16 位 hex",
+                        "SKYKA077394 / 16 位 hex / 12 位 SN",
                         &mut self.sn_text,
                         260.0,
                         true,
@@ -1131,7 +1162,7 @@ impl AurokuApp {
                 ui,
                 &s,
                 Icon::Info,
-                "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制。",
+                "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动使用备用解析。",
                 Tone::Neutral,
             );
         });
@@ -1219,6 +1250,8 @@ impl AurokuApp {
         });
 
         ui.add_space(12.0);
+        self.driver_card(ui);
+        ui.add_space(12.0);
         self.last_result_card(ui);
     }
 
@@ -1299,7 +1332,6 @@ impl AurokuApp {
                     "运行一次状态读取或探测后，结果会显示在这里",
                 );
             }
-            self.driver_actions(ui, &s);
         });
 
         if open_json {
@@ -1307,56 +1339,260 @@ impl AurokuApp {
         }
     }
 
-    /// Action row shown when the device needs a WinUSB driver (Windows).
-    fn driver_actions(&mut self, ui: &mut Ui, s: &M3Colors) {
+    /// Persistent WinUSB driver card shown on the overview page (Windows only).
+    fn driver_card(&mut self, ui: &mut Ui) {
         if !cfg!(windows) {
             return;
         }
-        let Some((vid, pid)) = self.driver_offer else {
-            return;
-        };
-        ui.add_space(10.0);
-        ui.label(
-            RichText::new(i18n::t(
-                "该设备当前由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。",
-            ))
-            .size(12.5)
-            .color(s.on_surface_variant),
-        );
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if button(
+        let s = self.scheme.clone();
+        let target = self.driver_target();
+        let target_label = self.driver_target_label();
+        let status = target.map(|target| self.driver_status_text(target));
+        let pending = self.driver_pending_restore.is_some();
+        let log_path = auroku::driver::log_path().display().to_string();
+
+        let mut install = false;
+        let mut restore = false;
+        let mut refresh = false;
+        let mut copy_log = false;
+
+        card(ui, &s, |ui| {
+            card_header(
                 ui,
-                s,
-                Some(Icon::Usb),
-                i18n::t("安装 WinUSB 驱动"),
-                ButtonKind::Filled,
-                !self.busy,
-                0.0,
-            )
-            .clicked()
-            {
+                &s,
+                Icon::Usb,
+                "WinUSB 驱动",
+                "管理设备当前的功能驱动（usbser / WinUSB），仅 Windows 可用",
+            );
+            banner(
+                ui,
+                &s,
+                Icon::Info,
+                "Windows 上设备默认由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。",
+                Tone::Neutral,
+            );
+            ui.add_space(10.0);
+
+            if let (true, Some(label)) = (pending, target_label.as_ref()) {
+                banner(
+                    ui,
+                    &s,
+                    Icon::Warning,
+                    &i18n::tf(
+                        "上次会话未恢复 {target} 的原始 USB 驱动，可在“WinUSB 驱动”卡片中恢复",
+                        &[("target", label)],
+                    ),
+                    Tone::Warning,
+                );
+                ui.add_space(8.0);
+            }
+
+            ui.horizontal(|ui| {
+                subtle_label(ui, &s, "目标设备");
+                match &target_label {
+                    Some(label) => {
+                        chip(ui, &s, label, Tone::Primary);
+                    }
+                    None => {
+                        chip(
+                            ui,
+                            &s,
+                            "无目标设备（请选择设备或填写 VID / PID）",
+                            Tone::Neutral,
+                        );
+                    }
+                }
+            });
+            if let (Some(_), Some((text, tone))) = (target, status.as_ref()) {
+                ui.horizontal(|ui| {
+                    subtle_label(ui, &s, "驱动状态");
+                    chip(ui, &s, text, *tone);
+                });
+            }
+
+            ui.add_space(10.0);
+            let can_act = !self.busy && target.is_some();
+            ui.horizontal_wrapped(|ui| {
+                if button(
+                    ui,
+                    &s,
+                    Some(Icon::Usb),
+                    "安装 WinUSB 驱动",
+                    ButtonKind::Filled,
+                    can_act,
+                    0.0,
+                )
+                .clicked()
+                {
+                    install = true;
+                }
+                if button(
+                    ui,
+                    &s,
+                    Some(Icon::Refresh),
+                    "恢复原驱动",
+                    ButtonKind::Outlined,
+                    can_act,
+                    0.0,
+                )
+                .clicked()
+                {
+                    restore = true;
+                }
+                if button(
+                    ui,
+                    &s,
+                    Some(Icon::Refresh),
+                    "刷新驱动状态",
+                    ButtonKind::Text,
+                    can_act,
+                    0.0,
+                )
+                .clicked()
+                {
+                    refresh = true;
+                }
+            });
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                switch(ui, &s, &mut self.restore_driver_on_exit);
+                ui.label(
+                    RichText::new(i18n::t("退出时自动恢复原驱动"))
+                        .size(13.0)
+                        .color(s.on_surface),
+                );
+            });
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                subtle_label(
+                    ui,
+                    &s,
+                    &i18n::tf("驱动日志：{path}", &[("path", &log_path)]),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if button(
+                        ui,
+                        &s,
+                        Some(Icon::Copy),
+                        "复制驱动日志路径",
+                        ButtonKind::Text,
+                        true,
+                        0.0,
+                    )
+                    .clicked()
+                    {
+                        copy_log = true;
+                    }
+                });
+            });
+        });
+
+        if let Some((vid, pid)) = target {
+            if install {
                 self.install_driver(vid, pid);
             }
-            if button(
-                ui,
-                s,
-                Some(Icon::Refresh),
-                i18n::t("恢复原驱动"),
-                ButtonKind::Outlined,
-                !self.busy,
-                0.0,
-            )
-            .clicked()
-            {
+            if restore {
                 self.restore_driver(vid, pid);
             }
-        });
-        ui.add_space(4.0);
-        ui.checkbox(
-            &mut self.restore_driver_on_exit,
-            i18n::t("退出时自动恢复原驱动"),
-        );
+            if refresh {
+                self.force_driver_status_query();
+            }
+        }
+        if copy_log {
+            ui.ctx().copy_text(log_path);
+            self.notify(i18n::t("驱动日志路径已复制到剪贴板"), Tone::Success);
+        }
+    }
+
+    /// Resolve the device the driver card manages.
+    ///
+    /// Priority: pending restore target, the manual VID/PID fields (the same
+    /// target the next task will use), then the selected device.
+    fn driver_target(&self) -> Option<(u16, u16)> {
+        if let Some(target) = self.driver_pending_restore {
+            return Some(target);
+        }
+        if let (Ok(vid), Ok(pid)) = (parse_hex_u16(&self.vid_text), parse_hex_u16(&self.pid_text)) {
+            return Some((vid, pid));
+        }
+        self.selected_device_key()
+            .map(|(vid, pid, _, _)| (vid, pid))
+    }
+
+    /// Label for the driver target, preferring the selected device name.
+    fn driver_target_label(&self) -> Option<String> {
+        let (vid, pid) = self.driver_target()?;
+        let named = self
+            .selected_device
+            .and_then(|index| self.devices.get(index))
+            .filter(|device| (device.vid, device.pid) == (vid, pid))
+            .map(device_label);
+        Some(named.unwrap_or_else(|| format!("{vid:04X}:{pid:04X}")))
+    }
+
+    /// Send a throttled driver-status query when the target changed or the
+    /// cached answer is older than the refresh interval.
+    fn pump_driver_status(&mut self) {
+        if !cfg!(windows) || self.busy {
+            return;
+        }
+        let Some(target) = self.driver_target() else {
+            self.driver_status_cache = None;
+            self.driver_status_query = None;
+            return;
+        };
+        let stale = match self.driver_status_query {
+            Some((queried, at)) => queried != target || at.elapsed() >= DRIVER_STATUS_REFRESH,
+            None => true,
+        };
+        if stale {
+            self.driver_status_query = Some((target, Instant::now()));
+            self.worker.send(Request::DriverStatus {
+                vid: target.0,
+                pid: target.1,
+            });
+        }
+    }
+
+    /// Query the driver service immediately after a driver operation, an error
+    /// or a manual refresh; the card shows "reading" until the answer arrives.
+    fn force_driver_status_query(&mut self) {
+        self.driver_status_cache = None;
+        self.driver_status_query = None;
+        if !cfg!(windows) {
+            return;
+        }
+        let Some((vid, pid)) = self.driver_target() else {
+            return;
+        };
+        self.driver_status_query = Some(((vid, pid), Instant::now()));
+        self.worker.send(Request::DriverStatus { vid, pid });
+    }
+
+    /// Status text and tone shown by the driver card.
+    fn driver_status_text(&self, target: (u16, u16)) -> (String, Tone) {
+        match self.driver_status_cache.as_ref() {
+            Some((vid, pid, service)) if (*vid, *pid) == target => match service.as_deref() {
+                Some(name) if name.eq_ignore_ascii_case("WINUSB") => {
+                    (i18n::t("WINUSB（已安装）").to_owned(), Tone::Success)
+                }
+                Some(name) if name.eq_ignore_ascii_case("usbser") => (
+                    i18n::t("usbser（需要安装 WinUSB 驱动）").to_owned(),
+                    Tone::Warning,
+                ),
+                Some(name) => (
+                    i18n::tf("当前 Service：{service}", &[("service", name)]),
+                    Tone::Neutral,
+                ),
+                None => (
+                    i18n::t("未检测到设备或无法读取驱动状态").to_owned(),
+                    Tone::Neutral,
+                ),
+            },
+            _ => (i18n::t("正在读取驱动状态…").to_owned(), Tone::Neutral),
+        }
     }
 
     fn status_summary(&self, ui: &mut Ui, result: &Value) {
@@ -2727,6 +2963,12 @@ impl eframe::App for AurokuApp {
         }
 
         self.poll_events();
+        if self.screen == Screen::Overview {
+            self.pump_driver_status();
+            if cfg!(windows) && self.driver_target().is_some() {
+                ctx.request_repaint_after(DRIVER_STATUS_REFRESH);
+            }
+        }
         if self.busy || self.scanning {
             self.worker.keep_alive();
         }

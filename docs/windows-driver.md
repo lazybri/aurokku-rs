@@ -37,8 +37,10 @@
 
 发布版的 `auroku.exe` / `auroku-gui.exe` 在 CI 中**静态链接了 libwdi**,所以:
 
-- GUI:操作因驱动失败时,「最近结果」卡片显示原因,并给出 **安装 WinUSB 驱动** /
-  **恢复原驱动** 两个按钮,以及「退出时自动恢复原驱动」复选框(默认关闭);
+- GUI:概览页**常驻「WinUSB 驱动」管理卡**(Windows 上始终显示),显示目标设备、
+  当前 Service(`WINUSB` / `usbser` / 其他)、**安装 WinUSB 驱动** / **恢复原驱动** /
+  **刷新驱动状态** 按钮、驱动日志路径与复制按钮,以及「退出时自动恢复原驱动」
+  开关(默认关闭);无需先触发一次驱动错误;
 - 点击后只弹**一次**标准 UAC 对话框(标题是本程序),没有控制台窗口、没有额外 exe;
 - 安装成功后自动重试刚才失败的操作;
 - 恢复时用 `pnputil /remove-device` 移除设备节点,Windows 重新枚举后自动绑回 usbser。
@@ -71,12 +73,9 @@ auroku --op restore-driver --vid 04C5 --pid 1270
 CLI 的 `--restore-on-exit` 不会让一次性进程立刻卸载,它只把“退出时恢复”的意图
 写进状态文件,由之后退出的 GUI 或手动 `--op restore-driver` 完成。
 
-CLI 的 `--restore-on-exit` 不会让一次性进程立刻卸载,它只把“退出时恢复”的意图
-写进状态文件,由之后退出的 GUI 或手动 `--op restore-driver` 完成。
-
 安装结果记录在 `%LOCALAPPDATA%\auroku\driver-state.json`(可用
-`AUROKU_STATE_DIR` 覆盖)。如果勾了「退出时恢复」但进程被强杀,下次启动会打印
-警告并给出恢复命令——这是崩溃兜底。
+`AUROKU_STATE_DIR` 覆盖)。如果勾了「退出时恢复」但进程被强杀,下次启动时概览页的
+「WinUSB 驱动」卡会显示待恢复警告,可直接点「恢复原驱动」完成兜底。
 
 ### 方式 B:Zadig(手动,最快)
 

@@ -54,6 +54,11 @@ pub enum Request {
         vid: u16,
         pid: u16,
     },
+    /// Query the current function driver service of the device (Windows only).
+    DriverStatus {
+        vid: u16,
+        pid: u16,
+    },
     Shutdown,
 }
 
@@ -84,6 +89,12 @@ pub enum Event {
         vid: u16,
         pid: u16,
         result: Result<(), String>,
+    },
+    /// Current function driver service of the device (Windows only).
+    DriverStatus {
+        vid: u16,
+        pid: u16,
+        service: Option<String>,
     },
 }
 
@@ -179,6 +190,10 @@ impl Worker {
                                 pid,
                                 result,
                             });
+                        }
+                        Request::DriverStatus { vid, pid } => {
+                            let service = driver::driver_service(vid, pid);
+                            let _ = thread_events.send(Event::DriverStatus { vid, pid, service });
                         }
                         Request::Shutdown => break,
                     }

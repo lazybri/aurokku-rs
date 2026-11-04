@@ -15,8 +15,10 @@ the original Python source.
 - Single-session status / batch queries
 - USB layout enumeration, SERI echo and SCDP active probe (`--op probe`)
 - Type2Auth 52/53 authentication (`--type2`)
+- Brand-tolerant SN parsing: 11-character serials, 16 hex NV10077 bytes, and 12-character "five letters + decimal serial" serials (fallback derives the 24-bit NV10077 field)
 - Optional JSON output and verbose USB frame logs
 - egui + eframe cross-platform GUI (Material 3, Chinese/English UI, Wayland / Windows / macOS)
+- Resident WinUSB driver card on Windows: status, install / restore, log path and restore-on-exit
 
 ## GUI front-end (egui / Material 3)
 
@@ -33,6 +35,12 @@ a Chinese/English interface.
 
 All USB operations run on a background thread, so the UI never blocks on libusb
 transfers or timeouts.
+
+On Windows the Overview page always shows a **resident WinUSB management card**:
+it reports the device's current function driver service (`WINUSB`, `usbser`, …),
+installs or restores the WinUSB driver (one UAC prompt), shows and copies the
+driver log path, and can restore the original driver automatically when the GUI
+exits. The card appears without waiting for a driver error.
 
 ```bash
 # Development
@@ -70,8 +78,9 @@ Platform notes:
 - **Permissions**: the Linux GUI runs unprivileged and requests device-scoped
   USB access after selection. On Windows the device is claimed by `usbser.sys`
   (it shows up as "USB Serial Device" / COMx) and libusb cannot open it until a
-  WinUSB driver is installed — see [docs/windows-driver.md](docs/windows-driver.md)
-  for Zadig / wdi-simple / signed-INF instructions.
+  WinUSB driver is installed — use the resident WinUSB card on the Overview page,
+  or see [docs/windows-driver.md](docs/windows-driver.md) for Zadig / wdi-simple /
+  signed-INF instructions.
 
 ### Linux USB permissions
 
@@ -310,9 +319,17 @@ auroku --op status --vid 0482 --pid 0a5c --json
 auroku --op status --vid 0482 --pid 0a5c --verbose
 auroku --op status --vid 0482 --pid 0a5c --sn SKYKA077394
 auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
+# 12-character brand serials are parsed through the fallback path:
+auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
 ```
 
 ## Relationship to the Python version
+
+The original upstream protocol implementation is vendored, pinned and unmodified
+under [`docs/upstream/`](docs/upstream/README.md)
+(<https://github.com/saga0324/auRokku>, commit
+`3b1eccf01eb8429b98aa43696fb47673a21241bd`) as the protocol baseline. It is not
+compiled, linked or shipped in release artifacts.
 
 | Python | Rust |
 | --- | --- |
@@ -334,6 +351,13 @@ Implementation details:
   descriptors, matching pyusb `read`/`write` auto-detection.
 - When `--sn` is 16 hex digits, it is used verbatim as Type2Auth material
   (Python semantics) rather than being mapped back to an 11-character serial.
+- Some brands return a 12-character serial of five ASCII letters followed by a
+  seven-digit decimal sequence (for example `SCADX1771880`). When the tail cannot
+  be decoded as hex / BCD, the parser falls back to decoding that decimal
+  sequence into the 3-byte big-endian NV10077 field (keeping the usual 5 + 3
+  byte layout), then reverses the material exactly like the standard path.
+  11-character serials and 16-hex inputs are unchanged, truncated 11-character
+  serials are still rejected, and the device SN is still reported verbatim.
 - Error type names (`ValueError` / `RuntimeError` / `TimeoutError`) and exit
   codes (1 on failure) match the Python version.
 

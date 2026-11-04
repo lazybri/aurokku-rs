@@ -161,34 +161,118 @@ fn decode_lockcode_digits(data: &[u8]) -> String {
     out
 }
 
+/// Which SN layout produced the Type2Auth raw material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnParseMode {
+    /// 16-hex material used verbatim, or the classic 11-character layout
+    /// (5 ASCII prefix + hex tail, stored reversed).
+    Standard,
+    /// 5 ASCII letters followed by a decimal serial number mapped onto the
+    /// 3-byte big-endian NV10077 field, then stored reversed. Covers the
+    /// 12-character brand serials such as `SCADX1771880`.
+    FallbackDecimal,
+}
+
 /// Parse a serial number into the 8 raw Type2Auth bytes plus the canonical name.
 ///
 /// Matches `parse_sn_to_type2auth` in the Python source:
-///  - 16 hex chars: used verbatim as raw Type2Auth material.
+///  - empty input: empty material and name (key derivation rejects it later);
+///  - 16 hex chars: used verbatim as raw Type2Auth material;
 ///  - otherwise: first 5 chars are ASCII (upper-cased) followed by hex digits;
 ///    the resulting bytes are stored reversed.
-fn parse_sn_to_type2auth(sn_str: &str) -> AuRokkuResult<(Vec<u8>, String)> {
+///
+/// Brand devices that report a 12-character serial whose tail is not valid hex
+/// (for example `SCADX1771880` or `SCAEE0359010`) are handled by the
+/// [`SnParseMode::FallbackDecimal`] path: five ASCII letters followed by a
+/// 7-digit decimal serial are mapped onto the 3-byte big-endian NV10077 field,
+/// and the whole 8-byte block is reversed exactly like the standard path.
+pub fn parse_sn_to_type2auth(sn_str: &str) -> AuRokkuResult<(Vec<u8>, String)> {
+    let (material, canonical_sn, _mode) = parse_sn_to_type2auth_mode(sn_str)?;
+    Ok((material, canonical_sn))
+}
+
+/// Parse a serial number and also report which layout produced the material.
+///
+/// The canonical layouts keep Python-compatible behaviour; the decimal fallback
+/// only runs when the canonical path cannot produce 8 bytes.
+pub(crate) fn parse_sn_to_type2auth_mode(
+    sn_str: &str,
+) -> AuRokkuResult<(Vec<u8>, String, SnParseMode)> {
     let s = sn_str.trim();
 
+    // Python returns empty material for an empty SN; key derivation then fails.
+    if s.is_empty() {
+        return Ok((Vec::new(), String::new(), SnParseMode::Standard));
+    }
+
+    // 1. Canonical: 16 hex chars are the raw Type2Auth bytes, used verbatim.
     if s.len() == 16 {
-        let auth_raw = hex::decode(s)
-            .map_err(|e| AuRokkuError::Value(format!("Invalid Type2Auth hex SN '{s}': {e}")))?;
-        return Ok((auth_raw, s.to_uppercase()));
+        if let Ok(raw) = hex::decode(s) {
+            if raw.len() == 8 {
+                return Ok((raw, s.to_uppercase(), SnParseMode::Standard));
+            }
+        }
     }
 
+    // 2. Canonical: 5 ASCII chars (upper-cased) + hex tail, stored reversed.
+    if let Some((material, canonical_sn)) = standard_sn_material(s) {
+        if material.len() == 8 {
+            return Ok((material, canonical_sn, SnParseMode::Standard));
+        }
+    }
+
+    // 3. Fallback: 5 letters + 7-digit decimal serial -> 3-byte big-endian
+    //    NV10077 field, stored reversed.
+    if let Some((material, canonical_sn)) = fallback_decimal_sn_material(s) {
+        return Ok((material, canonical_sn, SnParseMode::FallbackDecimal));
+    }
+
+    Err(AuRokkuError::Value(format!(
+        "Invalid SN '{s}': expected an 11-character serial (e.g. 'SKYKA077394'), \
+         16 hex Type2Auth bytes (e.g. '947307414B594B53'), or 5 ASCII letters \
+         followed by a 7-digit decimal serial (e.g. 'SCADX1771880')"
+    )))
+}
+
+/// Canonical non-hex layout: `min(5, len)` ASCII prefix (upper-cased) followed
+/// by a hex tail; the combined bytes are stored reversed.
+fn standard_sn_material(s: &str) -> Option<(Vec<u8>, String)> {
     if !s.is_ascii() {
-        return Err(AuRokkuError::Value(format!(
-            "SN must be ASCII to derive Type2Auth material: '{s}'"
-        )));
+        return None;
     }
-
     let split = s.len().min(5);
     let mut forward = s[..split].to_ascii_uppercase().into_bytes();
-    let tail = hex::decode(&s[split..])
-        .map_err(|e| AuRokkuError::Value(format!("Invalid hex digits in SN '{s}': {e}")))?;
+    let tail = hex::decode(&s[split..]).ok()?;
     forward.extend_from_slice(&tail);
     forward.reverse();
-    Ok((forward, s.to_uppercase()))
+    Some((forward, s.to_uppercase()))
+}
+
+/// Fallback layout for brand devices: five ASCII letters followed by a 7-digit
+/// decimal serial number (12 characters total). The decimal value is stored in
+/// the 3-byte big-endian NV10077 field and the whole block is reversed.
+///
+/// The shape is deliberately strict so that a truncated 11-character serial
+/// (for example `SKYKA07739`) is still rejected instead of silently producing
+/// wrong Type2Auth material.
+fn fallback_decimal_sn_material(s: &str) -> Option<(Vec<u8>, String)> {
+    if !s.is_ascii() || s.len() != 12 {
+        return None;
+    }
+    let (prefix, digits) = s.split_at(5);
+    if !prefix.bytes().all(|b| b.is_ascii_alphabetic())
+        || !digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let value: u32 = digits.parse().ok()?;
+    if value > 0x00FF_FFFF {
+        return None;
+    }
+    let mut forward = prefix.to_ascii_uppercase().into_bytes();
+    forward.extend_from_slice(&value.to_be_bytes()[1..]);
+    forward.reverse();
+    Some((forward, s.to_uppercase()))
 }
 
 /// `argparse`-style hex USB endpoint parser.
@@ -842,16 +926,24 @@ impl AuRokkuDevice {
             device_sn
         } else {
             return Err(AuRokkuError::Runtime(
-                "Cannot determine device SN. Please provide --sn <11_chars_or_16_hex> explicitly."
+                "Cannot determine device SN. Please provide --sn <serial_or_16_hex> \
+                 explicitly."
                     .to_string(),
             ));
         };
 
-        let (material, canonical_sn) = parse_sn_to_type2auth(&use_sn)?;
+        let (material, canonical_sn, sn_mode) = parse_sn_to_type2auth_mode(&use_sn)?;
         self.type2auth_material = Some(material);
         self.sn = Some(canonical_sn);
 
         if self.verbose {
+            if matches!(sn_mode, SnParseMode::FallbackDecimal) {
+                self.info(format!(
+                    "SN '{}' uses the decimal fallback parser: 5 ASCII letters + 7-digit \
+                     serial -> 3-byte big-endian NV10077 field, stored reversed",
+                    self.sn.as_deref().unwrap_or_default()
+                ));
+            }
             self.info(format!(
                 "Device SN: {}",
                 self.sn.as_deref().unwrap_or_default()
@@ -2312,7 +2404,7 @@ struct Cli {
     #[arg(long, value_parser = parse_hex_u16, required = true)]
     pid: u16,
 
-    /// 11-character serial number or 16-hex Type2Auth value (auto-detected if omitted)
+    /// 11-char serial, 16-hex Type2Auth, or 5 letters + decimal serial like SCADX1771880 (auto-detected if omitted)
     #[arg(long)]
     sn: Option<String>,
 
@@ -2962,16 +3054,49 @@ mod tests {
 
     #[test]
     fn parse_sn_11_char() {
-        let (raw, name) = parse_sn_to_type2auth("SKYKA077394").unwrap();
+        let (raw, name, mode) = parse_sn_to_type2auth_mode("SKYKA077394").unwrap();
         assert_eq!(hex::encode(&raw), "947307414b594b53");
         assert_eq!(name, "SKYKA077394");
+        assert_eq!(mode, SnParseMode::Standard);
     }
 
     #[test]
     fn parse_sn_16_hex_keeps_raw_material() {
-        let (raw, name) = parse_sn_to_type2auth("947307414B594B53").unwrap();
+        let (raw, name, mode) = parse_sn_to_type2auth_mode("947307414B594B53").unwrap();
         assert_eq!(hex::encode(&raw), "947307414b594b53");
         assert_eq!(name, "947307414B594B53");
+        assert_eq!(mode, SnParseMode::Standard);
+    }
+
+    #[test]
+    fn parse_sn_fallback_decimal_brand_serials() {
+        // 1771880 == 0x1B0968 -> big-endian 1B 09 68. The forward block is
+        // "SCADX" followed by those three bytes and is stored reversed.
+        let (raw, name, mode) = parse_sn_to_type2auth_mode("SCADX1771880").unwrap();
+        assert_eq!(mode, SnParseMode::FallbackDecimal);
+        assert_eq!(hex::encode(&raw), "68091b5844414353");
+        assert_eq!(name, "SCADX1771880");
+
+        // 359010 == 0x057A62.
+        let (raw, name, mode) = parse_sn_to_type2auth_mode("SCAEE0359010").unwrap();
+        assert_eq!(mode, SnParseMode::FallbackDecimal);
+        assert_eq!(hex::encode(&raw), "627a054545414353");
+        assert_eq!(name, "SCAEE0359010");
+
+        // Lower-case input is canonicalised to upper case.
+        let (raw, name, mode) = parse_sn_to_type2auth_mode("scaee0359010").unwrap();
+        assert_eq!(mode, SnParseMode::FallbackDecimal);
+        assert_eq!(hex::encode(&raw), "627a054545414353");
+        assert_eq!(name, "SCAEE0359010");
+    }
+
+    #[test]
+    fn parse_sn_fallback_encodes_value_big_endian() {
+        // "0000010" -> 10 -> 0x00000A -> big-endian 00 00 0A.
+        let (raw, name, mode) = parse_sn_to_type2auth_mode("ABCDE0000010").unwrap();
+        assert_eq!(mode, SnParseMode::FallbackDecimal);
+        assert_eq!(hex::encode(&raw), "0a00004544434241");
+        assert_eq!(name, "ABCDE0000010");
     }
 
     #[test]
@@ -2980,8 +3105,14 @@ mod tests {
         let (empty, _) = parse_sn_to_type2auth("").unwrap();
         assert!(derive_type2auth_key(&empty).is_err());
 
+        // Truncated 11-character serial: never valid, even though it is
+        // "5 letters + decimal digits".
         assert!(parse_sn_to_type2auth("SKYKA07739").is_err());
         assert!(parse_sn_to_type2auth("ZZZZZZZZZZZZZZZZ").is_err());
+        // Fallback rejects a non-decimal tail and any non-12-character length.
+        assert!(parse_sn_to_type2auth("SCADX177188A").is_err());
+        assert!(parse_sn_to_type2auth("SCADX17718800").is_err());
+        assert!(parse_sn_to_type2auth("SCADX16777216").is_err());
     }
 
     #[test]

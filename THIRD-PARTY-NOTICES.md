@@ -91,6 +91,16 @@ BSD-2-Clause, BSL-1.0, CC0-1.0 and Unlicense licensed helper crates such as
 `unicode-segmentation`, `byteorder-lite` and `clipboard-win`. All of these
 are permissive and compatible with GPL-3.0-only.
 
+### 2.4 Upstream protocol reference — GPL-3.0 (source only)
+
+The pinned upstream Python protocol implementation is vendored under
+[`docs/upstream/`](docs/upstream/README.md) for protocol comparison: upstream
+<https://github.com/saga0324/auRokku>, commit
+`3b1eccf01eb8429b98aa43696fb47673a21241bd`, GPL-3.0. It is **not** compiled,
+linked or distributed with any release artifact; the upstream licence text is
+kept at [`docs/upstream/LICENSE`](docs/upstream/LICENSE). Both projects are
+GPL-3.0 and the vendored copy is unmodified (SHA256 recorded in its README).
+
 ## 3. Fonts and icons
 
 At runtime the GUI prefers a system CJK font (Noto Sans CJK, Microsoft YaHei,

@@ -120,9 +120,10 @@ pub fn t(text: &str) -> &str {
         "安装 WinUSB 驱动" => "Install WinUSB driver",
         "恢复原驱动" => "Restore original driver",
         "退出时自动恢复原驱动" => "Restore the original driver on exit",
-        "该设备当前由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。" => {
-            "This device is owned by usbser.sys; libusb needs the WinUSB driver to access it. Installing asks for UAC confirmation once."
+        "Windows 上设备默认由 usbser.sys 占用；libusb 需要 WinUSB 驱动才能访问。安装时需要确认一次 UAC。" => {
+            "On Windows the device is normally owned by usbser.sys; libusb needs the WinUSB driver to access it. Installing asks for UAC confirmation once."
         }
+        "WinUSB 驱动已安装" => "WinUSB driver installed",
         "正在安装 WinUSB 驱动…" => "Installing the WinUSB driver…",
         "正在安装 WinUSB 驱动（需要管理员确认）…" => {
             "Installing the WinUSB driver (administrator confirmation required)…"
@@ -137,8 +138,25 @@ pub fn t(text: &str) -> &str {
         "已恢复原始 USB 驱动" => "Restored the original USB driver",
         "驱动操作失败：{message}" => "Driver operation failed: {message}",
         "驱动日志：{path}" => "Driver log: {path}",
-        "上次会话未恢复 {target} 的原始 USB 驱动，可在“最近结果”卡片中恢复" => {
-            "The previous session did not restore the original USB driver for {target}; you can restore it from the result card."
+        "WinUSB 驱动" => "WinUSB driver",
+        "管理设备当前的功能驱动（usbser / WinUSB），仅 Windows 可用" => {
+            "Manage the current function driver for the device (usbser / WinUSB); Windows only"
+        }
+        "目标设备" => "Target device",
+        "无目标设备（请选择设备或填写 VID / PID）" => {
+            "No target device (select a device or enter VID / PID)"
+        }
+        "驱动状态" => "Driver status",
+        "WINUSB（已安装）" => "WINUSB (installed)",
+        "usbser（需要安装 WinUSB 驱动）" => "usbser (WinUSB driver required)",
+        "当前 Service：{service}" => "Current service: {service}",
+        "未检测到设备或无法读取驱动状态" => "Device not detected or driver status unavailable",
+        "正在读取驱动状态…" => "Reading driver status…",
+        "刷新驱动状态" => "Refresh driver status",
+        "复制驱动日志路径" => "Copy driver log path",
+        "驱动日志路径已复制到剪贴板" => "Driver log path copied to clipboard",
+        "上次会话未恢复 {target} 的原始 USB 驱动，可在“WinUSB 驱动”卡片中恢复" => {
+            "The previous session did not restore the original USB driver for {target}; you can restore it from the WinUSB driver card."
         }
 
         // ------------------------------------------------------------------
@@ -159,13 +177,13 @@ pub fn t(text: &str) -> &str {
             "No devices found (check USB permissions and rescan)"
         }
         "SN（可选）" => "SN (optional)",
-        "SKYKA077394 或 16 位 hex" => "SKYKA077394 or 16 hex digits",
+        "SKYKA077394 / 16 位 hex / 12 位 SN" => "SKYKA077394 / 16 hex digits / 12-char SN",
         "接口号（可选）" => "Interface (optional)",
         "自动" => "Auto",
         "Type2Auth 52/53 认证" => "Type2Auth 52/53 authentication",
         "详细 USB 日志" => "Verbose USB log",
-        "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制。" => {
-            "When SN is empty the device iSerialNumber is used. If the device has no serial, enter an 11-character SN or 16 hex digits manually."
+        "SN 留空时读取设备 iSerialNumber；若设备不提供序列号，请手动填写 11 位 SN 或 16 位十六进制；12 位 SN 会自动使用备用解析。" => {
+            "When SN is empty the device iSerialNumber is used. If the device has no serial, enter an 11-character SN or 16 hex digits manually; a 12-character SN automatically uses the fallback parser."
         }
         "快捷操作" => "Quick actions",
         "所有 USB 操作都在后台线程执行，界面不会卡住" => {
@@ -486,6 +504,12 @@ mod tests {
 
         assert_eq!(t("概览"), "Overview");
         assert_eq!(t("读取综合状态"), "Read full status");
+        assert_eq!(t("WinUSB 驱动"), "WinUSB driver");
+        assert_eq!(t("刷新驱动状态"), "Refresh driver status");
+        assert_eq!(
+            tf("当前 Service：{service}", &[("service", "WINUSB")]),
+            "Current service: WINUSB"
+        );
         assert_eq!(
             tf("扫描完成，发现 {n} 个 USB 设备", &[("n", "2")],),
             "Scan complete: 2 USB device(s) found"

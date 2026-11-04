@@ -14,8 +14,10 @@
 - 单会话综合状态 / 批量查询
 - USB 布局枚举、SERI 回声与 SCDP 主动探测（`--op probe`）
 - Type2Auth 52/53 认证（`--type2`）
+- 兼容多品牌 SN 解析：11 位序列号、16 位十六进制 NV10077，以及“5 位字母 + 十进制序号”的 12 位序列号（备用路径推导 24-bit NV10077 字段）
 - 可选 JSON 输出、详细 USB 帧日志
 - egui + eframe 跨平台 GUI 前端（Material 3 风格，中英文界面，Wayland / Windows / macOS）
+- Windows 常驻 WinUSB 驱动卡：状态、安装 / 恢复、日志路径与退出自动恢复
 
 ## GUI 前端（egui / Material 3）
 
@@ -28,6 +30,11 @@ Material 3 组件（导航栏、卡片、填充 / tonal / outlined 按钮、开�
   未设置时默认中文）。若系统没有可用的 CJK 字体，会自动回退到 English。
 
 所有 USB 操作都在后台线程执行，界面不会因 libusb 传输或超时而卡住。
+
+Windows 上“概览”页会**常驻显示 WinUSB 驱动管理卡**：显示设备当前的驱动
+Service（`WINUSB`、`usbser` 等）、安装 / 恢复 WinUSB 驱动（仅需确认一次 UAC）、
+显示并复制驱动日志路径，并可选择在退出 GUI 时自动恢复原驱动。该卡片无需等待
+驱动错误出现即可使用。
 
 ```bash
 # 开发运行
@@ -61,7 +68,8 @@ PKG_CONFIG=/bin/false cargo build --release --features gui --bin auroku-gui
   可通过环境变量 `AUROKU_GUI_FONT=/path/to/font.ttf` 指定字体文件。
 - **权限**：Linux GUI 始终以普通用户运行；选择设备后才会请求该设备的 USB
   权限。Windows 上设备默认被 `usbser.sys` 占用（显示为“USB 串行设备 / COMx”），
-  libusb 无法直接打开，需要安装 WinUSB 驱动，详见
+  libusb 无法直接打开，需要安装 WinUSB 驱动：可直接使用“概览”页的常驻
+  WinUSB 驱动卡，或详见
   [docs/windows-driver.md](docs/windows-driver.md)（Zadig / wdi-simple / 签名 INF）。
 
 ### Linux USB 权限
@@ -281,9 +289,17 @@ auroku --op status --vid 0482 --pid 0a5c --json
 auroku --op status --vid 0482 --pid 0a5c --verbose
 auroku --op status --vid 0482 --pid 0a5c --sn SKYKA077394
 auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
+# 部分品牌的 12 位 SN 会走备用解析路径：
+auroku --op status --vid 0482 --pid 0a5c --sn SCADX1771880
 ```
 
 ## 与 Python 版本的对应关系
+
+上游原始协议实现已固定并原样收录在
+[`docs/upstream/`](docs/upstream/README.md)
+（<https://github.com/saga0324/auRokku>，commit
+`3b1eccf01eb8429b98aa43696fb47673a21241bd`），作为协议对照基线；它不会被编译、
+链接或随发布产物分发。
 
 | Python | Rust |
 | --- | --- |
@@ -305,6 +321,11 @@ auroku --op status --vid 0482 --pid 0a5c --sn 947307414B594B53 --type2
   `read` / `write` 的自动判定行为一致。
 - `--sn` 为 16 位十六进制时按 Python 语义原样作为 Type2Auth 材料，不再
   反推 11 位序列号。
+- 部分品牌会返回 12 位 SN：前 5 位 ASCII 字母 + 7 位十进制序号（例如
+  `SCADX1771880`）。当尾部无法按 hex / BCD 直接解码时，解析器启用备用路径，
+  把该十进制序号换算为 3 字节大端 NV10077 字段（仍保持 5 + 3 字节布局），
+  再按与原路径相同的规则整体 reverse。11 位 SN 与 16 位 hex 的行为不变，
+  截断的 11 位 SN 仍会被拒绝，设备 SN 仍按原样显示。
 - 错误类型名（`ValueError` / `RuntimeError` / `TimeoutError`）与退出码
   （失败为 1）均与 Python 版保持一致。
 
