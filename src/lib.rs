@@ -1302,21 +1302,44 @@ impl AuRokkuDevice {
         self.drain(50);
 
         if self.vid != 0x0FCE && self.send(&[0xD8]).is_ok() {
-            std::thread::sleep(Duration::from_millis(50));
-            self.drain(50);
+            // Some phones need longer than 50 ms to come back after D8; this is
+            // especially noticeable when the Type2 fallback retries immediately.
+            std::thread::sleep(Duration::from_millis(150));
+            self.drain(100);
         }
 
-        self.send(&[0x1C, 0x05])?;
-        self.awaiting_handshake = true;
-        let echo_result = self.recv(2, DEFAULT_TIMEOUT);
-        self.awaiting_handshake = false;
-        let echo = echo_result?;
+        let mut last_error = None;
+        let mut handshake_ok = false;
+        for attempt in 0..2 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(250));
+                self.drain(100);
+            }
 
-        if echo != [0x1C, 0x05] {
-            return Err(AuRokkuError::Runtime(format!(
-                "Base handshake echo mismatch: {}",
-                hex_spaced(&echo)
-            )));
+            self.send(&[0x1C, 0x05])?;
+            self.awaiting_handshake = true;
+            let echo_result = self.recv(2, DEFAULT_TIMEOUT);
+            self.awaiting_handshake = false;
+
+            match echo_result {
+                Ok(echo) if echo == [0x1C, 0x05] => {
+                    handshake_ok = true;
+                    break;
+                }
+                Ok(echo) => {
+                    return Err(AuRokkuError::Runtime(format!(
+                        "Base handshake echo mismatch: {}",
+                        hex_spaced(&echo)
+                    )));
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+
+        if !handshake_ok {
+            return Err(last_error.unwrap_or_else(|| {
+                AuRokkuError::Timeout("Base handshake got no response".to_string())
+            }));
         }
 
         if self.type2 {
@@ -2421,6 +2444,9 @@ pub fn run_task(config: &DeviceConfig, task: &Task) -> AuRokkuResult<Value> {
     if let Some(sink) = &config.log_sink {
         sink("默认认证失败，自动回退到 Type2Auth（base 52/53）重试…");
     }
+    // The failed attempt sends D8 and releases the interface; some phones need
+    // time to reset before the next 1C05 handshake (observed on Sanyo devices).
+    std::thread::sleep(Duration::from_millis(700));
     let mut result = run_task_once(config, task, true)?;
     result["type2_fallback"] = json!(true);
     Ok(result)
